@@ -279,9 +279,8 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         objectIds = objectIds.filter(id => keep.includes(id))
       }
       const needed = alertRowsFor(run, { ...view, objectIds, rows: 1 })
-      // A World default is watched: its object's alerts keep room for the first of those still to come.
-      const watched = frame === 'window' && view.elements === undefined && view.refs === undefined
-      fitted.push({ ...view, objectIds, rows: watched ? Math.max(1 + WATCHED_ALERT_LINES, needed) : needed })
+      // A World default is watched: its alerts keep room for the first of those still to come (an element's, an observable's too).
+      fitted.push({ ...view, objectIds, rows: frame === 'window' ? Math.max(1 + WATCHED_ALERT_LINES, needed) : needed })
     } else if (view.kind === 'slots') {
       const object = visibleObject(run, view.objectId)
       if (object !== undefined) fitted.push({ ...view, rows: Math.max(1, slotsOf(run, object).length) })

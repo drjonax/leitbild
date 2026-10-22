@@ -9,7 +9,6 @@
  * leads with after it).
  */
 import { priorityLevels, type AlertState } from '../../../core/model/alerts.ts'
-import { leadsObject } from '../alerts/rows.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { StoppedLead } from '../../../core/observation/capabilities.ts'
 import type { Observable, Observation, Quantity } from '../../../core/observation/model.ts'
@@ -114,8 +113,6 @@ export const recordedOf = async (run: ComposeRun, refs: ReadonlyArray<string>, c
 
 const rankOf = (alert: AlertState): number => alert.priority === undefined ? -1 : priorityLevels.indexOf(alert.priority)
 const worst = (alerts: ReadonlyArray<AlertState>): AlertState | undefined => [...alerts].sort((left, right) => rankOf(right) - rankOf(left))[0]
-const hasAlerts = (run: ComposeRun, objectIds: ReadonlyArray<string>, pass: (alert: AlertState) => boolean = () => true): boolean =>
-  objectIds.some(objectId => visibleObject(run, objectId)?.alerts.some(pass) === true)
 const alertsView = (objectIds: ReadonlyArray<ObjectId>, filter: { readonly elements?: ReadonlyArray<string>; readonly refs?: ReadonlyArray<string>; readonly lead?: true } = {}): DraftView =>
   ({ kind: 'alerts', objectIds: [...objectIds], ...(filter.elements === undefined ? {} : { elements: [...filter.elements] }), ...(filter.refs === undefined ? {} : { refs: [...filter.refs] }), ...(filter.lead === true ? { lead: true } : {}) })
 
@@ -165,7 +162,8 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     const related = (presentedOf(run, object)?.related ?? []).map(entry => entry.objectId).filter(id => visibleObject(run, id) !== undefined)
     return [
       { kind: 'slots', objectId: object.id },
-      ...(object.alerts.length > 0 ? [alertsView([object.id])] : []),
+      // Always its alerts, "none" while it has none, filled each sample (plan §2 rule 3).
+      alertsView([object.id]),
       ...(related.length > 0 ? [{ kind: 'entity', objectIds: related } as DraftView] : []),
       ...(object.spatial.position !== undefined ? [{ kind: 'map', objectIds: [object.id] } as DraftView] : []),
     ]
@@ -179,8 +177,8 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
       { kind: 'values', lead },
       ...(trend.length > 0 ? [{ kind: 'trend', refs: [...trend], horizon: '10m' } as DraftView] : []),
       // Its own alerts, then its object's lead alerts, which say why it is where it is (a trip's first-out).
-      ...(hasAlerts(run, [subject.objectId], alert => (alert.subject !== undefined && 'element' in alert.subject && alert.subject.element === subject.elementId) || leadsObject(alert))
-        ? [alertsView([subject.objectId], { elements: [subject.elementId], lead: true })] : []),
+      // Always, "none" while there are none: a pop-over opened at power shows the trip's alerts within one sample.
+      alertsView([subject.objectId], { elements: [subject.elementId], lead: true }),
       ...(graph === null ? [] : aroundView(graph, nodeOf(graph, subject.elementId))),
     ]
   }
@@ -193,7 +191,7 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     return [
       recorded ? { kind: 'trend', refs: [subject.ref], horizon: '10m' }
         : { kind: 'values', refs: [subject.ref], ...(element === undefined ? {} : { lead: { objectId: subject.objectId, element }, rows: 4 }) },
-      ...(hasAlerts(run, [subject.objectId], alert => alert.observable === subject.ref) ? [alertsView([subject.objectId], { refs: [subject.ref] })] : []),
+      alertsView([subject.objectId], { refs: [subject.ref] }),
       ...(graph === null ? [] : aroundView(graph, nodeOf(graph, element))),
     ]
   }
@@ -209,16 +207,19 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
       refs.push(...lead.filter(ref => electricQuantities.has(declared.get(ref)!.observable.quantity)))
     }
     const unique = [...new Set(refs)]
+    const seen = ends.map(end => end.objectId).filter(id => visibleObject(run, id) !== undefined)
     return [
       ...(unique.length > 0 ? [{ kind: 'values', refs: unique } as DraftView] : []),
-      ...(hasAlerts(run, ends.map(end => end.objectId)) ? [alertsView(ends.map(end => end.objectId).filter(id => visibleObject(run, id) !== undefined))] : []),
+      // Both ends' alerts, "none" while there are none.
+      ...(seen.length > 0 ? [alertsView(seen)] : []),
     ]
   }
   const members = run.objects.filter(object => !run.denied.has(object.id) && object.packId === subject.of.packId && presentedOf(run, object)?.categoryId === subject.of.categoryId
     && (subject.of.closed || (object.lifecycle !== 'resolved' && object.lifecycle !== 'removed'))).map(object => object.id)
   return [
     { kind: 'collection', of: subject.of },
-    ...(hasAlerts(run, members) ? [alertsView(members.filter(id => visibleObject(run, id)!.alerts.length > 0))] : []),
+    // Its members' alerts, "none" while they have none (an object that joins it later is in its table, not here).
+    ...(members.length > 0 ? [alertsView(members)] : []),
     { kind: 'map', of: subject.of },
   ]
 }

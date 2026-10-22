@@ -61,11 +61,12 @@ afterAll(async () => { await registry.shutdown(); await rm(dataDir, { recursive:
 
 describe('P4: a procedure tag opens the default display of the signal it names', () => {
   test('each of the eight tags: its trend and its equipment drawn, the signal it names first; one the model lacks composes nothing', () => {
-    const opened = { opens: ['trend', 'topology'], first: true }
+    // Each with its alerts on the signal, "none" until there are some (plan §2 rule 3).
+    const opened = { opens: ['trend', 'alerts', 'topology'], first: true }
     expect(facts).toEqual({
       'PT-455': opened, 'NIS-PR-AVG': opened, 'SG-B-LVL-NR': opened, 'AFW-FLOW': opened, 'MSIV-A-POS': opened, 'DG-A': opened,
       // The trip breaker joins no line the Plant draws: its trend alone.
-      'TRIP-BKR-A': { opens: ['trend'], first: true },
+      'TRIP-BKR-A': { opens: ['trend', 'alerts'], first: true },
       'SI-SIG': { plan: 'not-in-model' },
     })
   })

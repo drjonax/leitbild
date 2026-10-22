@@ -13,6 +13,7 @@ import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { alertRows, priorityRank } from '../src/features/displays/alerts/rows.ts'
+import { sectionLines } from '../src/ui/embed/vignette/alerts.ts'
 import type { AlertState } from '../src/core/model/alerts.ts'
 import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import { leadRefs } from '../src/features/displays/compose/defaults.ts'
@@ -198,9 +199,9 @@ describe('World defaults of every subject kind', () => {
   test('entity-floor objects show their core slots and a map focus (ambulance, drone, Einsatz)', async () => {
     for (const objectId of ['unit:halden-1', 'drone:halden-search', 'unit:truck-1', 'site:brekke-depot']) {
       const { view, card, sample } = await opened(run, objectId)
-      expect(kinds(view.sections)).toEqual(['slots', 'map'])
+      expect(kinds(view.sections)).toEqual(['slots', 'alerts', 'map'])
       expect(card.items.length).toBeGreaterThan(0)
-      expect(sample.maps[1]?.positioned).toBe(1)
+      expect(sample.maps[2]?.positioned).toBe(1)
     }
     const drone = await opened(run, 'drone:halden-search')
     expect(drone.view.sections[0]?.kind === 'slots' && drone.view.sections[0].slots.some(slot => slot.key.startsWith('telemetry:'))).toBe(true)
@@ -239,9 +240,9 @@ describe('World defaults of every subject kind', () => {
     try {
       const fixtureRun = await fixture.runOf()
       expect(kinds((await opened(fixtureRun, 'unit:one')).view.sections)).toEqual(['values', 'alerts', 'topology'])
-      expect(kinds((await opened(fixtureRun, 'site:base')).view.sections)).toEqual(['slots', 'map'])
-      expect(kinds((await opened(fixtureRun, 'unit:one#engine')).view.sections)).toEqual(['values', 'topology'])
-      expect(kinds((await opened(fixtureRun, { of: { category: 'tasks', closed: false } })).view.sections)).toEqual(['entity', 'map'])
+      expect(kinds((await opened(fixtureRun, 'site:base')).view.sections)).toEqual(['slots', 'alerts', 'map'])
+      expect(kinds((await opened(fixtureRun, 'unit:one#engine')).view.sections)).toEqual(['values', 'alerts', 'topology'])
+      expect(kinds((await opened(fixtureRun, { of: { category: 'tasks', closed: false } })).view.sections)).toEqual(['entity', 'alerts', 'map'])
     } finally { await fixture.close() }
   })
 })
@@ -270,6 +271,50 @@ describe('a default opened before an upset', () => {
       if (!drawn.ok) throw new Error(JSON.stringify(drawn.issues))
       expect(drawn.state.views.map(view => view.kind)).toEqual(['topology'])
       expect((await sampleVignette(alarmed, drawn.state)).alerts.map(row => row.alert.message)).toEqual(['Engine overspeed'])
+    } finally { await fixture.close() }
+  })
+
+  // Plan §2 rule 3: every other default kind held its alerts view only where there were alerts as it was composed, so
+  // a core's or SG's pop-over opened at power showed none of the trip's.
+  test('every other default kind holds its alerts too, rows kept, filled each sample: an element (its own, then its object\'s lead alerts), an observable, an entity object, a collection', async () => {
+    const fixture = await fixtureComposeRun()
+    try {
+      const quiet = await fixture.runOf()
+      expect(quiet.objects.flatMap(object => object.alerts)).toEqual([])
+      const subjects = { element: 'unit:one#engine', observable: 'unit:one#speed', entity: 'site:base', collection: { of: { category: 'units', closed: false } } } as const
+      const composed = Object.fromEntries(await Promise.all(Object.entries(subjects).map(async ([kind, subject]) => {
+        const outcome = await composeDefault(quiet, subject)
+        if (!outcome.ok) throw new Error(`${kind}: ${JSON.stringify(outcome.issues)}`)
+        return [kind, { state: outcome.state, view: await compileVignette(quiet, outcome.state) }] as const
+      })))
+      const at = quiet.clock!.currentTime as AlertState['raisedAt']
+      const raised = (id: string, message: string, facets: Partial<AlertState>): AlertState => ({ id, kind: 'test', severity: 'critical', message, raisedAt: at, acknowledged: false, priority: 'alarm', clock: 'simulation', ...facets })
+      const alarms: Readonly<Record<string, ReadonlyArray<AlertState>>> = {
+        'unit:one': [
+          raised('overspeed', 'Engine overspeed', { subject: { element: 'engine' }, observable: 'unit:one#speed' }),
+          raised('trip', 'Unit trip on overspeed', { firstOut: { group: 'trip', rank: 1 } }),
+          raised('tank-low', 'Tank low', { subject: { element: 'tank' }, priority: 'caution', severity: 'warning' }),
+        ],
+        'site:base': [raised('gate', 'Base gate open', {})],
+      }
+      const alarmed = await fixture.runOf({ objects: quiet.objects.map(object => ({ ...object, alerts: alarms[object.id] ?? [] })) })
+      const shown: Record<string, ReadonlyArray<string>> = {}
+      for (const [kind, { state, view }] of Object.entries(composed)) {
+        // Composed with none raised: an alerts view keeping a head and four lines.
+        const index = state.views.findIndex(entry => entry.kind === 'alerts')
+        expect([kind, state.views[index]?.rows]).toEqual([kind, 5])
+        expect((await sampleVignette(quiet, state)).alerts).toEqual([])
+        // The same state, sampled once the alerts are raised: the section lists its own.
+        const section = view.sections.find(entry => entry.kind === 'alerts')
+        if (section?.kind !== 'alerts') throw new Error(`${kind}: no alerts section`)
+        shown[kind] = sectionLines((await sampleVignette(alarmed, state)).alerts, section, section.rows - 1).lines.map(line => line.row.alert.message)
+      }
+      expect(shown).toEqual({
+        element: ['Engine overspeed', 'Unit trip on overspeed'],
+        observable: ['Engine overspeed'],
+        entity: ['Base gate open'],
+        collection: ['Engine overspeed', 'Unit trip on overspeed', 'Tank low'],
+      })
     } finally { await fixture.close() }
   })
 })
