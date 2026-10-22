@@ -21,7 +21,16 @@ export const observationElementSchema = z.object({
   label: z.string().min(1).max(300),
   shortLabel: z.string().min(1).max(24).optional(),
   group: z.string().min(1).max(200).optional(),
+  /** The element this one is part of (a device its equipment bundles: a vessel's relief valve); its default carries the parent's lead values. */
+  parent: z.string().min(1).max(200).optional(),
+  /**
+   * What the element's detail leads with, in order, other elements' values among them (a steam generator's feed lines'
+   * flows), as its Pack judges now (Q22): where that changes (an operating mode), the declaration's revision changes.
+   */
+  lead: z.array(observableRefSchema).min(1).max(16).optional(),
 }).strict()
+  .refine(element => element.parent !== element.id, { message: 'an element is not its own parent', path: ['parent'] })
+  .refine(element => element.lead === undefined || new Set(element.lead).size === element.lead.length, { message: 'an element leads with each value once', path: ['lead'] })
 
 export const observationDeclarationSchema = z.object({
   objectId: objectIdSchema,
