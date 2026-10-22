@@ -199,21 +199,41 @@ const commandedByActedTrips = (plant: CompiledProcessPlant, now: PlantNow): Read
   .filter(action => !armed(action, now.read)).flatMap(action => action.writes.map(write => write.component)))
 
 /**
- * What says equipment that declares shutdown readings has stopped, once a
- * trip commanding it has acted, as E-0 verifies a reactor trip first: its
- * declared on/off readings (rods on bottom), the states every trip commanding
- * it moves (both reactor trip breakers), then its declared readings (power
- * range and startup rate, falling). None while every trip commanding it can
- * still act (at power), or for equipment that declares none.
+ * What says equipment has stopped (stopReadings), once a trip commanding it
+ * has acted, as E-0 verifies a reactor trip first. None while every trip
+ * commanding it can still act (at power).
  */
-const stoppedReadings = (plant: CompiledProcessPlant, component: number, acted: ReadonlySet<number>): ReadonlyArray<VariablePath> => {
+const stoppedReadings = (plant: CompiledProcessPlant, component: number, acted: ReadonlySet<number>): ReadonlyArray<VariablePath> =>
+  acted.has(component) ? stopReadings(plant, component) : []
+
+/** The trips that command a component: every automatic action that writes one of its commands. */
+const stoppingActions = (plant: CompiledProcessPlant, component: number) => [...automaticActions(plant).values()].filter(action => action.writes.some(write => write.component === component))
+
+/**
+ * What says equipment that declares shutdown readings has stopped, whatever its state now, in E-0's order: its declared
+ * on/off readings (rods on bottom), the states every trip commanding it moves (both reactor trip breakers), then its
+ * declared readings (rod steps, power range, intermediate range current and startup rate). None for equipment that
+ * declares none or that no trip commands.
+ */
+export const stopReadings = (plant: CompiledProcessPlant, component: number): ReadonlyArray<VariablePath> => {
   const declared = plant.graph.components[component]!.semantics.shutdownReadings
-  if (declared.length === 0 || !acted.has(component)) return []
-  const moved = [...automaticActions(plant).values()].filter(action => action.writes.some(write => write.component === component))
-    .map(action => actionStates(plant, action).map(state => state.path))
-  const common = (moved[0] ?? []).filter(path => moved.every(paths => paths.includes(path)))
+  const moved = stoppingActions(plant, component).map(action => actionStates(plant, action).map(state => state.path))
+  if (declared.length === 0 || moved.length === 0) return []
+  const common = moved[0]!.filter(path => moved.every(paths => paths.includes(path)))
   const state = (path: VariablePath): boolean => plant.graph.signalBindingByPath.get(path)?.quantity === 'boolean'
-  return [...declared.filter(state), ...common, ...declared.filter(path => !state(path))]
+  return [...new Set([...declared.filter(state), ...common, ...declared.filter(path => !state(path))])]
+}
+
+/**
+ * The commands that say a trip commanding the component has acted (armed: every command it writes reads what it
+ * wrote), one set per trip, a set any other contains left out: it holds whenever that one does (a safety injection
+ * writes the reactor trip's commands among its own).
+ */
+export const stopCommands = (plant: CompiledProcessPlant, component: number): ReadonlyArray<ReadonlyArray<{ readonly path: VariablePath; readonly value: unknown }>> => {
+  const sets = stoppingActions(plant, component).map(action => new Map(action.writes.map(write => [`${write.binding.path}=${JSON.stringify(write.value)}`, { path: write.binding.path, value: write.value }] as const)))
+  const within = (inner: ReadonlyMap<string, unknown>, outer: ReadonlyMap<string, unknown>): boolean => [...inner.keys()].every(key => outer.has(key))
+  const minimal = sets.filter((set, at) => !sets.some((other, index) => index !== at && within(other, set) && (other.size < set.size || index < at)))
+  return minimal.map(set => [...set.values()])
 }
 
 // A signal belongs to the node that owns its path and to the equipment it is

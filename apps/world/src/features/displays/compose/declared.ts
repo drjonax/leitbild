@@ -66,5 +66,8 @@ export const declaredRefs = async (run: SearchRun, refs: ReadonlyArray<string>):
 export const valueOf = ({ observable, object, element }: Declared): VignetteValue => ({
   ref: observable.ref, label: `${object.label} · ${observable.label}`.slice(0, 80), quantity: observable.quantity, unit: observable.unit,
   valueType: observable.valueType, thresholds: observable.thresholds, series: observable.series,
-  ...(observable.states === undefined ? {} : { states: observable.states }), ...(element === undefined ? {} : { element }),
+  ...(observable.states === undefined ? {} : { states: observable.states }), ...(element === undefined ? {} : { element: named(element) }),
 })
+/** An element as a value names it: what it leads with stays in its declaration. */
+const named = ({ id, class: kind, label, shortLabel, group, parent }: VignetteElement): VignetteElement =>
+  ({ id, class: kind, label, ...(shortLabel === undefined ? {} : { shortLabel }), ...(group === undefined ? {} : { group }), ...(parent === undefined ? {} : { parent }) })

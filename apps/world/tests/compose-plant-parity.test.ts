@@ -16,6 +16,7 @@ import { composeDefault, composeVignette } from '../src/features/displays/compos
 import { FLOW_ROOM, overviewOf, scopeWithin, topologyOf } from '../src/features/displays/compose/topology.ts'
 import { resolveSubject } from '../src/features/displays/compose/resolve.ts'
 import { visibleObject } from '../src/features/displays/compose/declared.ts'
+import type { VignetteView } from '../src/features/displays/compose/model.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
@@ -69,6 +70,11 @@ const opened = async (subject: string) => {
   expect(JSON.stringify(outcome.state).length).toBeLessThanOrEqual(4_096)
   return { ...outcome, view: await compileVignette(run, outcome.state), sample: await sampleVignette(run, outcome.state) }
 }
+/** The refs a compiled default's values section shows now (a lead request's as it leads). */
+const shownIn = (view: VignetteView): ReadonlyArray<string> => {
+  const section = view.sections.find(entry => entry.kind === 'values')
+  return section?.kind === 'values' ? section.values.map(value => value.ref) : []
+}
 
 describe('P9: the plant default carries what the Unit Overview carries', () => {
   test('its own states as chips under the title, its lead values with trends, its alarms with the trip first out, and the whole-plant drawing beside them (Q20)', async () => {
@@ -82,8 +88,9 @@ describe('P9: the plant default carries what the Unit Overview carries', () => {
     expect(own).toHaveLength(7)
     expect(state.chips).toEqual(own)
     expect(view.chips?.map(value => value.ref)).toEqual(own)
-    const values = state.views[0]
-    expect(values?.kind === 'values' && values.refs.length > 0 && values.refs.every(ref => !own.includes(ref))).toBe(true)
+    // Its lead values are a lead request, read each sample, never refs fixed as it opened (H1).
+    expect(state.views[0]).toEqual({ kind: 'values', lead: { objectId: plantId }, rows: 8 })
+    expect(shownIn(view).length > 0 && shownIn(view).every(ref => !own.includes(ref))).toBe(true)
     expect(card.items.slice(0, own.length).map(item => item.subject)).toEqual(own.map(ref => ({ ref })))
     // A window stands the drawing beside a column of the other views: rows count as the taller of the two, within 40.
     expect(state.beside).toBe(true)
@@ -130,8 +137,7 @@ describe('P9: an equipment default carries what the detail display carries', () 
   test('a steam generator: its flow neighbourhood at the detail scope, its readings, its related alarms, the element its actions open on', async () => {
     const { state, view, card } = await opened(`${plantId}#sgA`)
     expect(state.views.map(entry => entry.kind)).toEqual(expect.arrayContaining(['values', 'topology']))
-    const readings = state.views.find(entry => entry.kind === 'values')
-    expect(readings?.kind === 'values' && readings.refs.every(ref => ref.startsWith(`${plantId}#`))).toBe(true)
+    expect(shownIn(view).length > 0 && shownIn(view).every(ref => ref.startsWith(`${plantId}#`))).toBe(true)
     const drawing = view.sections.find(section => section.kind === 'topology')
     if (drawing?.kind !== 'topology') throw new Error('no drawing')
     expect(drawing.layout.width <= FLOW_ROOM.columns && drawing.layout.height <= FLOW_ROOM.rows).toBe(true)
@@ -193,10 +199,9 @@ describe('P9: an equipment default carries what the detail display carries', () 
     const { state, view } = await opened(`${plantId}#PORV`)
     expect(view.title).toBe(`${visibleObject(run, plantId)!.label} · PORV`)
     // Its readings (Q22): its measured position first, never its demand or a value only the simulator computes.
-    const readings = state.views.find(entry => entry.kind === 'values')
-    if (readings?.kind !== 'values') throw new Error('no values')
-    expect(readings.refs[0]).toBe(`${plantId}#pressurizer.reliefValveEffectivePositionFraction`)
-    expect(readings.refs).not.toContain(`${plantId}#pressurizer.reliefValvePositionFraction`)
+    expect(state.views.find(entry => entry.kind === 'values')).toMatchObject({ lead: { objectId: plantId, element: 'pressurizer.reliefValve' } })
+    expect(shownIn(view)[0]).toBe(`${plantId}#pressurizer.reliefValveEffectivePositionFraction`)
+    expect(shownIn(view)).not.toContain(`${plantId}#pressurizer.reliefValvePositionFraction`)
     const drawing = view.sections.find(section => section.kind === 'topology')
     expect(drawing?.kind === 'topology' && drawing.nodes.map(node => node.id)).toContain('pressurizer.reliefValve')
   })
@@ -204,9 +209,8 @@ describe('P9: an equipment default carries what the detail display carries', () 
   // E2 porv-open: once the Plant declares the PORV's host (parent: the pressurizer, p2-plant), its default carries the
   // pressurizer's lead values after its own, its pressure and level among them.
   test('the PORV carries the pressurizer\'s pressure and level after its own readings', async () => {
-    const { state } = await opened(`${plantId}#PORV`)
-    const readings = state.views.find(entry => entry.kind === 'values')
-    expect(readings?.kind === 'values' && readings.refs).toEqual(expect.arrayContaining([`${plantId}#pressurizer.pressureMPa`, `${plantId}#pressurizer.levelPercent`]))
+    const { view } = await opened(`${plantId}#PORV`)
+    expect(shownIn(view)).toEqual(expect.arrayContaining([`${plantId}#pressurizer.pressureMPa`, `${plantId}#pressurizer.levelPercent`]))
   })
 })
 
@@ -226,8 +230,7 @@ describe('Q22: equipment defaults lead with today\'s detail key values', () => {
     for (const [element, values] of Object.entries(recorded)) {
       const outcome = await composeDefault(powerRun, `${plantId}#${element}`)
       if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
-      const readings = outcome.state.views.find(entry => entry.kind === 'values')
-      expect(readings?.kind === 'values' && readings.refs.slice(0, values.length), element).toEqual(values.map(path => `${plantId}#${path}`))
+      expect(shownIn(await compileVignette(powerRun, outcome.state)).slice(0, values.length), element).toEqual(values.map(path => `${plantId}#${path}`))
     }
   })
 })

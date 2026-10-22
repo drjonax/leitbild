@@ -1,4 +1,4 @@
-import { equipmentKeyValues } from '../ic/key-values.ts'
+import { equipmentKeyValues, readsAsMeasured, stopCommands, stopReadings } from '../ic/key-values.ts'
 import type { VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { createProcessPlantRuntime } from '../runtime/index.ts'
@@ -10,6 +10,35 @@ import { createProcessPlantRuntime } from '../runtime/index.ts'
 // a range silenced): each is ranked for the mode at the Plant's nominal state,
 // its model's initial values, so a declaration's revision changes with the
 // mode's lists and not with every trip, and the compose caches hold.
+//
+// An energy end a trip commands also declares what verifies its stop (D-E,
+// amending D-86): its stop readings, led with once the commands of one trip
+// commanding it read as that trip wrote them. Both are static; World reads
+// the commands each sample, so after a trip the core leads with its rods on
+// the bottom, both trip breakers and its flux, as E-0 verifies it.
+
+const stops = new WeakMap<CompiledProcessPlant, ReadonlyMap<string, ElementStop>>()
+
+/** What verifies a component's stop, and the commands that say a trip commanding it has acted (each set one trip's). */
+export interface ElementStop {
+  readonly when: ReadonlyArray<ReadonlyArray<{ readonly path: VariablePath; readonly value: unknown }>>
+  readonly lead: ReadonlyArray<VariablePath>
+}
+
+/** Each component's stop, by component id: those that declare stop readings, a trip commands and an operator reads. */
+export const elementStops = (plant: CompiledProcessPlant): ReadonlyMap<string, ElementStop> => stops.get(plant) ?? (() => {
+  const measured = (path: VariablePath): boolean => {
+    const binding = plant.graph.signalBindingByPath.get(path)
+    return binding !== undefined && readsAsMeasured(binding) && binding.simulatorOnly !== true
+  }
+  const found = new Map(plant.graph.components.flatMap(component => {
+    const lead = stopReadings(plant, component.index).filter(measured)
+    const when = stopCommands(plant, component.index)
+    return lead.length === 0 || when.length === 0 ? [] : [[String(component.id), { when, lead }] as const]
+  }))
+  stops.set(plant, found)
+  return found
+})()
 
 const nominalReads = new WeakMap<CompiledProcessPlant, ReadonlyMap<string, unknown>>()
 

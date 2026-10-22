@@ -10,12 +10,12 @@ import type { ObjectId } from '../../../core/model/index.ts'
 import type { DisplaySpec, View } from '../../../core/observation/spec.ts'
 import { alertItem, assembleCard, entityItem, slotItems, valueItem } from './card.ts'
 import { declarationOf, declaredRefs, same, valueOf, visibleObject } from './declared.ts'
-import { defaultViews, elementRefs, leadRefs, ownStates, recordedOf, type DraftView } from './defaults.ts'
+import { defaultViews, elementRefs, LEAD_ROWS, leadNow, leadRefs, ownStates, recordedOf, type DraftView } from './defaults.ts'
 import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
 import { TOPOLOGY_REACH } from '../topology/scope.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
-import { alertRowsFor, alertsOf, entityRows, groupValues, readsOf, refsRead, slotsOf, stripsOf } from './view.ts'
+import { alertRowsFor, alertsOf, entityRows, groupValues, leadsNow, readsOf, refsRead, slotsOf, stripsOf } from './view.ts'
 
 export type ComposeOutcome =
   | { readonly ok: true; readonly state: VignetteState; readonly card: DisplayCard; readonly rows: number }
@@ -158,12 +158,22 @@ const resolveView = async (run: ComposeRun, view: View, path: string, subjects: 
   return placed.length === 0 ? notObserved(path, 'none of the subjects has a position') : { kind: 'map', objectIds: [...new Set(placed)], ...(view.within === undefined ? {} : { within: view.within }) }
 }
 
+/**
+ * A default as an answer shows it: each lead request as the values it leads with now, so the card an answer cites and
+ * the rows its vignette draws stay the same values (a window's default reads its requests again each sample).
+ */
+const answered = async (run: ComposeRun, drafts: ReadonlyArray<DraftView>): Promise<ReadonlyArray<DraftView>> => Promise.all(drafts.map(async view => {
+  if (view.kind !== 'values' || view.lead === undefined) return view
+  const refs = [...new Set([...view.refs ?? [], ...(await leadNow(run, view.lead)).refs])].slice(0, view.rows ?? LEAD_ROWS)
+  return { kind: 'values', refs } as DraftView
+}))
+
 /** Defaults of several subjects as one vignette: views of a kind merge; at most four, values first. */
 const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>): ReadonlyArray<DraftView> => {
   const merged: DraftView[] = []
   for (const view of lists.flat()) {
     const known = merged.find(entry => entry.kind === view.kind)
-    if (known?.kind === 'values' && view.kind === 'values') known.refs.splice(0, Infinity, ...new Set([...known.refs, ...view.refs]))
+    if (known?.kind === 'values' && view.kind === 'values') merged[merged.indexOf(known)] = { kind: 'values', refs: [...new Set([...known.refs ?? [], ...view.refs ?? []])] }
     else if (known?.kind === 'trend' && view.kind === 'trend') known.refs.splice(0, Infinity, ...new Set([...known.refs, ...view.refs]))
     else if (known?.kind === 'alerts' && view.kind === 'alerts' && known.objectIds !== 'run' && view.objectIds !== 'run') {
       merged[merged.indexOf(known)] = { kind: 'alerts', objectIds: [...new Set([...known.objectIds, ...view.objectIds])] }
@@ -178,8 +188,9 @@ const covers = (views: ReadonlyArray<ResolvedView>, subject: Subject): boolean =
   // The Run's alerts are every subject's alerts too.
   if (view.kind === 'alerts' && view.objectIds === 'run') return true
   if (subject.kind === 'collection') return (view.kind === 'collection' || view.kind === 'map') && JSON.stringify(view.of) === JSON.stringify(subject.of)
-  if (subject.kind === 'observable' && (view.kind === 'values' || view.kind === 'trend')) return view.refs.includes(subject.ref)
-  const objects: ReadonlyArray<string> = view.kind === 'values' || view.kind === 'trend' ? view.refs.map(refObjectId) : view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
+  if (subject.kind === 'observable' && (view.kind === 'values' || view.kind === 'trend')) return view.refs?.includes(subject.ref) === true
+  const objects: ReadonlyArray<string> = view.kind === 'values' ? [...(view.refs ?? []).map(refObjectId), ...view.lead === undefined ? [] : [view.lead.objectId]]
+    : view.kind === 'trend' ? view.refs.map(refObjectId) : view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
     : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && view.objectIds !== 'run' ? view.objectIds : view.kind === 'map' ? view.objectIds ?? [] : []
   return subjectObjects(subject).some(objectId => objects.includes(objectId))
 })
@@ -205,20 +216,23 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
     if (views.length < 4) views.push({ kind: 'alerts', objectIds: subjectIds.filter(id => visibleObject(run, id)!.alerts.length > 0) })
     else { dropped += pressing.length; countAdjustment(adjusted, { kind: 'layout', text: `${pressing.length} alerts at caution or above not shown` }) }
   }
-  // Completion: the lead, the shortest time to act among the subjects' lead values, in the first values or trend view.
-  const leads = (await Promise.all(subjects.flatMap(subject => subject.kind === 'object' && subject.observed ? [leadRefs(run, subject.objectId)] : []))).flat()
-  const shown = views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : [])
+  // Completion: the lead, the shortest time to act among the subjects' lead values, in the first values or trend view;
+  // a lead request leads as its Pack ranks each sample, so a vignette holding one is not completed.
+  const requested = views.some(view => view.kind === 'values' && view.lead !== undefined)
+  const leads = requested ? [] : (await Promise.all(subjects.flatMap(subject => subject.kind === 'object' && subject.observed ? [leadRefs(run, subject.objectId)] : []))).flat()
+  const shown = views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs ?? [] : [])
   const acting = leads.length === 0 ? [] : (await run.port.read({ refs: [...new Set([...leads, ...shown])] })).observations.filter(observation => observation.timeToAct !== undefined)
   const lead = [...acting].sort((left, right) => left.timeToAct!.seconds - right.timeToAct!.seconds)[0]
-  const first = views.find((view): view is Extract<DraftView, { kind: 'values' | 'trend' }> => view.kind === 'values' || view.kind === 'trend')
-  if (lead !== undefined && first !== undefined && !shown.includes(lead.ref)) first.refs.unshift(lead.ref)
+  const first = views.findIndex(view => view.kind === 'values' || view.kind === 'trend')
+  const into = views[first]
+  if (lead !== undefined && (into?.kind === 'values' || into?.kind === 'trend') && !shown.includes(lead.ref)) views[first] = { ...into, refs: [lead.ref, ...into.refs ?? []] } as DraftView
 
   // Fit: each view within its caps, rows allotted; what it cannot keep is named, never silently dropped.
   const issues: ComposeIssue[] = []
   const fitted: ResolvedView[] = []
   /** The fitted views that draw a flow topology. */
   const flows = new Set<ResolvedView>()
-  const declared = await declaredRefs(run, views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : []))
+  const declared = await declaredRefs(run, views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs ?? [] : []))
   const trim = (path: string, refs: ReadonlyArray<string>, cap: number, what: string): ReadonlyArray<string> => {
     const readable = refs.filter(ref => declared.has(ref))
     const hidden = refs.length - readable.length
@@ -231,10 +245,17 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   }
   for (const [index, view] of views.entries()) {
     const path = `views.${index}`
-    if (view.kind === 'values') {
-      const refs = trim(path, view.refs, 16, 'values')
+    if (view.kind === 'values' && view.lead !== undefined) {
+      // A lead request reserves its rows now for whatever it leads with later: its named values, then as many as it
+      // may lead with (stopped or not), at most its own cap or the column's eight.
+      const refs = trim(path, view.refs ?? [], 16, 'values')
+      const pool = (await leadNow(run, view.lead)).pool.filter(ref => !refs.includes(ref))
+      const rows = Math.min(view.rows ?? refs.length + LEAD_ROWS, refs.length + pool.length)
+      if (rows > 0) fitted.push({ kind: 'values', ...(refs.length === 0 ? {} : { refs: [...refs] }), lead: view.lead, rows })
+    } else if (view.kind === 'values') {
+      const refs = trim(path, view.refs ?? [], 16, 'values')
       const values = refs.map(ref => declared.get(ref)!)
-      if (refs.length > 0) fitted.push({ ...view, refs: [...refs], rows: groupValues(values.map(valueOf))?.rows ?? refs.length })
+      if (refs.length > 0) fitted.push({ kind: 'values', refs: [...refs], rows: groupValues(values.map(valueOf))?.rows ?? refs.length })
     } else if (view.kind === 'trend') {
       const recorded = view.refs.filter(ref => declared.get(ref)?.observable.series != null)
       const refs = trim(path, recorded, 12, 'pens')
@@ -366,8 +387,9 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
 /** The card of a fitted state: every value it reads, the alerts and table rows its rows hold; each one a section leaves out is counted and said. */
 const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted: ReadonlyArray<DisplayCardAdjustment>, dropped: number): Promise<DisplayCard> => {
   // Named values first, then the chips' and the views' own values; what a drawing binds comes after the alerts and tables.
-  const read = await refsRead(run, state)
-  const own = readsOf(state).refs
+  const leads = await leadsNow(run, state)
+  const read = await refsRead(run, state, leads)
+  const own = readsOf(state, leads).refs
   const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...own])].filter(ref => read.includes(ref))
   const bound = read.filter(ref => !refs.includes(ref))
   const [declared, values] = await Promise.all([declaredRefs(run, read), read.length === 0 ? null : run.port.read({ refs: read })])
@@ -416,7 +438,10 @@ export const composeVignette = async (run: ComposeRun, spec: DisplaySpec): Promi
   }
   if (issues.length > 0) return refuse(issues)
   const kept: Kept = { refs: new Set(subjects.flatMap(subject => subject.kind === 'observable' ? [subject.ref] : [])), explicit: new Set() }
-  if (spec.views.length === 0) return finish(run, spec.title, 'assistant', subjects, mergeDefaults(await Promise.all(subjects.map(subject => defaultViews(run, subject)))), kept, 'chat', await chipsOf(run, subjects))
+  if (spec.views.length === 0) {
+    const defaults = await Promise.all(subjects.map(async subject => answered(run, await defaultViews(run, subject))))
+    return finish(run, spec.title, 'assistant', subjects, mergeDefaults(defaults), kept, 'chat', await chipsOf(run, subjects))
+  }
   const views: DraftView[] = []
   for (const [index, view] of spec.views.entries()) {
     const resolved = await resolveView(run, view, `views.${index}`, subjects, kept)

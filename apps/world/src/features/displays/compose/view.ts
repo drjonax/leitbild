@@ -9,7 +9,8 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import { routeDistanceMeters } from '../../../core/model/route.ts'
 import type { Observation } from '../../../core/observation/model.ts'
 import { alertRows, leadsObject, priorityRank, worstFirst, type AlertRow } from '../alerts/rows.ts'
-import { declaredRefs, valueOf, visibleObject } from './declared.ts'
+import { declaredRefs, valueOf, visibleObject, type Declared } from './declared.ts'
+import { leadNow } from './defaults.ts'
 import {
   ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type ResolvedView, type SeriesPoint, type SlotDeclaration, type VignetteSample,
   type VignetteSection, type VignetteState, type VignetteValue, type VignetteView,
@@ -25,13 +26,27 @@ export interface ViewRun extends ComposeRun { readonly series: SeriesPort }
 const distanceBands = { '1km': 1_000, '5km': 5_000, '20km': 20_000, '50km': 50_000, '150km': 150_000 } as const
 type SlotValue = VignetteSample['slots'][string][string]
 
-/** What a state reads: refs of its values and trends, the objects of its other views (topology adds its binding refs once scoped). */
-export const readsOf = (state: VignetteState): { readonly refs: ReadonlyArray<string>; readonly objectIds: ReadonlyArray<string> } => ({
-  refs: [...new Set([...state.chips ?? [], ...state.views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : [])])],
+/**
+ * What a state names: refs of its chips, values and trends in view order, the objects of its other views and of its
+ * lead requests (topology adds its binding refs once scoped); given what its lead requests lead with now (leadsNow),
+ * those refs in their views' places.
+ */
+export const readsOf = (state: VignetteState, leads?: ReadonlyMap<number, ReadonlyArray<string>>): { readonly refs: ReadonlyArray<string>; readonly objectIds: ReadonlyArray<string> } => ({
+  refs: [...new Set([...state.chips ?? [], ...state.views.flatMap((view, index) => view.kind === 'values' || view.kind === 'trend' ? leads?.get(index) ?? view.refs ?? [] : [])])],
   objectIds: [...new Set(state.views.flatMap(view => view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
     : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && view.objectIds !== 'run' ? view.objectIds
-      : view.kind === 'map' ? [...view.objectIds ?? [], ...view.around === undefined ? [] : [view.around]] : []))],
+      : view.kind === 'map' ? [...view.objectIds ?? [], ...view.around === undefined ? [] : [view.around]]
+        : view.kind === 'values' && view.lead !== undefined ? [view.lead.objectId] : []))],
 })
+
+/** Each values view's refs now, by view index, where it holds a lead request: its named refs, then what the request leads with (leadNow), in its rows. */
+export const leadsNow = async (run: ComposeRun, state: VignetteState): Promise<ReadonlyMap<number, ReadonlyArray<string>>> => {
+  const leads = new Map<number, ReadonlyArray<string>>()
+  for (const [index, view] of state.views.entries()) {
+    if (view.kind === 'values' && view.lead !== undefined) leads.set(index, [...new Set([...view.refs ?? [], ...(await leadNow(run, view.lead)).refs])].slice(0, view.rows))
+  }
+  return leads
+}
 
 /** Parallel values (one element class, each element in its own group, one value per quantity): a table, one line per element; else null. */
 export const groupValues = (values: ReadonlyArray<VignetteValue>): Extract<VignetteSection, { kind: 'grouped' }> | null => {
@@ -131,11 +146,14 @@ export const framedBy = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'm
 }
 
 export const compileVignette = async (run: ComposeRun, state: VignetteState): Promise<VignetteView> => {
-  const declared = await declaredRefs(run, readsOf(state).refs)
+  const leads = await leadsNow(run, state)
+  const declared = await declaredRefs(run, readsOf(state, leads).refs)
   const values = (refs: ReadonlyArray<string>): ReadonlyArray<VignetteValue> => refs.flatMap(ref => declared.has(ref) ? [valueOf(declared.get(ref)!)] : [])
   const sections: VignetteSection[] = []
-  for (const view of state.views) {
-    if (view.kind === 'values') sections.push(groupValues(values(view.refs)) ?? { kind: 'values', rows: view.rows, values: values(view.refs) })
+  for (const [index, view] of state.views.entries()) {
+    // A lead request's rows keep their places whatever it leads with (never grouped); each sample brings its values now.
+    if (view.kind === 'values' && leads.has(index)) sections.push({ kind: 'values', rows: view.rows, values: values(leads.get(index)!), lead: index })
+    else if (view.kind === 'values') sections.push(groupValues(values(view.refs ?? [])) ?? { kind: 'values', rows: view.rows, values: values(view.refs ?? []) })
     else if (view.kind === 'trend') sections.push({ kind: 'trend', rows: view.rows, horizonMs: horizonMs(view.horizon), strips: stripsOf(values(view.refs).filter(value => value.series !== null)).slice(0, 4) })
     else if (view.kind === 'alerts') {
       const objectIds = view.objectIds === 'run' ? 'run' : view.objectIds.filter(id => visibleObject(run, id) !== undefined)
@@ -210,8 +228,8 @@ export const alertRowsFor = (run: ComposeRun, view: Extract<ResolvedView, { kind
   return 1 + Math.max(1, Math.min(rows.length, Math.max(6, leading)))
 }
 
-/** The refs a state's views read now: its values and trends, and what its drawings bind. */
-export const refsRead = async (run: ComposeRun, state: VignetteState): Promise<ReadonlyArray<string>> => {
+/** The refs a state's views read now: its values and trends, what its lead requests lead with (leadsNow) and what its drawings bind. */
+export const refsRead = async (run: ComposeRun, state: VignetteState, leads?: ReadonlyMap<number, ReadonlyArray<string>>): Promise<ReadonlyArray<string>> => {
   const binding: string[] = []
   for (const view of state.views) {
     if (view.kind !== 'topology') continue
@@ -219,13 +237,20 @@ export const refsRead = async (run: ComposeRun, state: VignetteState): Promise<R
     const scoped = graph === null ? null : scopeWithin(graph, view.request)
     if (scoped?.ok === true) binding.push(...bindingRefs(scoped.scoped))
   }
-  return [...new Set([...readsOf(state).refs, ...binding])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
+  return [...new Set([...readsOf(state, leads ?? await leadsNow(run, state)).refs, ...binding])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
 }
 
-/** Everything a state's views read now; history (from `fromMs`, Run time) only when asked, on open and after a gap. */
+/**
+ * Everything a state's views read now, each lead request read again (its values now in `leads`, so a display opened
+ * before an upset leads as its Pack does after it, within one sample); history (from `fromMs`, Run time) only when asked, on open
+ * and after a gap.
+ */
 export const sampleVignette = async (run: ViewRun, state: VignetteState, history?: { readonly fromMs: number }): Promise<VignetteSample> => {
-  const refs = await refsRead(run, state)
+  const led = await leadsNow(run, state)
+  const refs = await refsRead(run, state, led)
   const observations: ReadonlyArray<Observation> = refs.length === 0 ? [] : (await run.port.read({ refs })).observations
+  const leadDeclared = led.size === 0 ? new Map<string, Declared>() : await declaredRefs(run, [...led.values()].flat())
+  const leads = Object.fromEntries([...led].map(([index, list]) => [index, list.flatMap(ref => leadDeclared.has(ref) ? [valueOf(leadDeclared.get(ref)!)] : [])] as const))
   const alerts = new Map<string, AlertRow>()
   const entities: Record<number, { rows: ReadonlyArray<EntityRow>; more: number }> = {}
   const slots: Record<string, Record<string, SlotValue>> = {}
@@ -258,5 +283,5 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
     return Object.fromEntries([...declared.values()].flatMap(entry => entry.observable.series === null ? []
       : [[entry.observable.series.seriesId, run.series(entry.observable.series.seriesId, new Date(history.fromMs).toISOString(), at.at)] as const]))
   })()
-  return { at, observations, alerts: [...alerts.values()], entities, slots, maps, ...(series === undefined ? {} : { series }) }
+  return { at, observations, alerts: [...alerts.values()], entities, slots, maps, ...(series === undefined ? {} : { series }), ...(led.size === 0 ? {} : { leads }) }
 }

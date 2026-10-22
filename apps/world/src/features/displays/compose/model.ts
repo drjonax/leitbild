@@ -30,8 +30,18 @@ export const collectionSchema = z.object({
   near: objectIdSchema.optional(), within: distanceBandSchema.optional(), closed: z.boolean(),
 }).strict()
 
+/**
+ * A lead request: the values an object, or one of its elements, leads with as its Pack judges each sample (the Pack's
+ * mode-aware lead read; an element's declared lead, its stop's first while it has been stopped). Never resolved refs:
+ * each sample reads it again into the view's reserved rows, so a change of lead set never moves the layout.
+ */
+export const leadRequestSchema = z.object({ objectId: objectIdSchema, element: z.string().min(1).max(200).optional() }).strict()
+export type LeadRequest = z.output<typeof leadRequestSchema>
+
 export const resolvedViewSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('values'), refs: z.array(observableRefSchema).min(1).max(16), rows }).strict(),
+  /** Named values (`refs`) first, then what a lead request leads with now, in the `rows` it reserves. */
+  z.object({ kind: z.literal('values'), refs: z.array(observableRefSchema).min(1).max(16).optional(), lead: leadRequestSchema.optional(), rows }).strict()
+    .refine(view => view.refs !== undefined || view.lead !== undefined, { message: 'a values view names refs or a lead request' }),
   z.object({ kind: z.literal('trend'), refs: z.array(observableRefSchema).min(1).max(12), horizon: z.enum(['2m', '10m', '30m']), rows }).strict(),
   /** The objects' alerts, or only those on these elements or observables; `lead`: those first, then the objects' lead alerts (leadsObject). */
   z.object({
@@ -72,8 +82,8 @@ export const vignetteStateSchema = z.object({
 }).strict()
 export type VignetteState = z.output<typeof vignetteStateSchema>
 
-/** A declared element an observable is measured on. */
-export type VignetteElement = ObservationDeclaration['elements'][number]
+/** A declared element an observable is measured on, as a vignette names it: never what it leads with. */
+export type VignetteElement = Omit<ObservationDeclaration['elements'][number], 'lead' | 'stopped'>
 
 /** A declared observable as a vignette names it: its label qualified with its object's ("<object> · <observable>", R25). */
 export type VignetteValue = Pick<Observable, 'ref' | 'quantity' | 'unit' | 'valueType' | 'states' | 'thresholds' | 'series'> & {
@@ -104,7 +114,8 @@ export interface TopologyNodeView extends Pick<TopologyNode, 'id' | 'label' | 's
 }
 
 export type VignetteSection =
-  | { readonly kind: 'values'; readonly rows: number; readonly values: ReadonlyArray<VignetteValue> }
+  /** `lead`: the index of the state's view whose lead request it shows; its values now are the sample's `leads[lead]`. */
+  | { readonly kind: 'values'; readonly rows: number; readonly values: ReadonlyArray<VignetteValue>; readonly lead?: number }
   /** Parallel values: one line per element, one column per quantity. */
   | { readonly kind: 'grouped'; readonly rows: number; readonly quantities: ReadonlyArray<{ readonly label: string; readonly unit: string }>; readonly lines: ReadonlyArray<{ readonly element: VignetteElement; readonly values: ReadonlyArray<VignetteValue | null> }> }
   /** Pens drawn together share a strip: at most four strips of at most four pens. */
@@ -155,6 +166,8 @@ export interface VignetteSample {
   }>>
   /** Only when history was asked for: each trend pen's recorded points from then until the sample, by series id. */
   readonly series?: Readonly<Record<string, ReadonlyArray<SeriesPoint>>>
+  /** By the index of each values view holding a lead request: its values now, at most its rows (named ones first). */
+  readonly leads?: Readonly<Record<number, ReadonlyArray<VignetteValue>>>
 }
 
 export type ComposeIssueCode = 'unknown_name' | 'pack_is_not_an_object' | 'agent_access_restricted' | 'not_observed' | 'not_fitted'

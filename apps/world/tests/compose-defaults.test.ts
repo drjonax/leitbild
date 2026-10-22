@@ -302,7 +302,11 @@ describe('an element default leads with its declared lead values (Q22)', () => {
       return { ...read, observations: [...read.observations, ...request.refs.filter(entry => added.has(entry)).map(entry => ({ ref: entry, at: read.observations[0]?.at ?? '2026-01-01T08:00:00.000Z', clock: 'simulation', value: entry === ref('valve') ? 'open' : 1, quality: 'good', priority: 'none' }) as never)] }
     },
   })
-  const valuesOf = (state: VignetteState) => { const view = state.views.find(entry => entry.kind === 'values'); return view?.kind === 'values' ? view.refs : undefined }
+  /** The values a state's values view shows now: its named refs, or what its lead request leads with (compiled). */
+  const valuesOf = async (viewRun: ViewRun, state: VignetteState) => {
+    const section = (await compileVignette(viewRun, state)).sections.find(entry => entry.kind === 'values')
+    return section?.kind === 'values' ? section.values.map(value => value.ref) : undefined
+  }
 
   test('the declared lead first (another element\'s value among them), then readings; no demand or model value; a device after its own, its host\'s', async () => {
     const fixture = await fixtureComposeRun()
@@ -311,14 +315,14 @@ describe('an element default leads with its declared lead values (Q22)', () => {
       const declared = await fixture.runOf({ port: declaring(run.port) })
       const engine = await composeDefault(declared, 'unit:one#engine')
       if (!engine.ok) throw new Error(JSON.stringify(engine.issues))
-      expect(valuesOf(engine.state)).toEqual([ref('fuelFlow'), ref('speed'), ref('vibration')])
+      expect(await valuesOf(declared, engine.state)).toEqual([ref('fuelFlow'), ref('speed'), ref('vibration')])
       const valve = await composeDefault(declared, 'unit:one#engine.valve')
       if (!valve.ok) throw new Error(JSON.stringify(valve.issues))
-      expect(valuesOf(valve.state)).toEqual([ref('valve'), ref('fuelFlow'), ref('speed'), ref('vibration')])
+      expect(await valuesOf(declared, valve.state)).toEqual([ref('valve'), ref('fuelFlow'), ref('speed'), ref('vibration')])
       // A request that names the demand shows it.
       const named = await composeVignette(declared, displaySpecSchema.parse({ title: 'Demand', question: 'What is the engine asked for?', subjects: [ref('demand')], views: [{ kind: 'values', signals: [ref('demand'), ref('slip')] }] }))
       if (!named.ok) throw new Error(JSON.stringify(named.issues))
-      expect(valuesOf(named.state)).toEqual([ref('demand'), ref('slip')])
+      expect(await valuesOf(declared, named.state)).toEqual([ref('demand'), ref('slip')])
     } finally { await fixture.close() }
   })
 })

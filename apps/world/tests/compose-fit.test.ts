@@ -125,7 +125,7 @@ describe('fit caps and invariants', () => {
     const outcome = await composeVignette(run, spec(['unit:u9#speed'], [{ kind: 'values', signals: ['unit:u9#speed', ...names] }]))
     if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
     const [values] = outcome.state.views
-    expect(values?.kind === 'values' && values.refs.length).toBe(16)
+    expect(values?.kind === 'values' && values.refs?.length).toBe(16)
     expect(values?.kind === 'values' && values.refs).toContain('unit:u9#speed')
     expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: '4 values not shown' })
     expect(values?.rows).toBe(16)
