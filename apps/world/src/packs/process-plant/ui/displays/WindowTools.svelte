@@ -9,7 +9,7 @@
   import OperationsLogDialog from './window/OperationsLogDialog.svelte'
   import PlantActionsDialog from './window/PlantActionsDialog.svelte'
   import ProposalsChip from './window/ProposalsChip.svelte'
-  import { readPendingProposals, readWindowPlant, type WindowPlant } from './window/window-operations.ts'
+  import { readPendingProposals, readWindowPlant, reviewSubject, type WindowPlant } from './window/window-operations.ts'
 
   // The Plant's tools in the display window's header, for the Plant whose
   // display the window shows (PackUiContribution.windowTools): its pending
@@ -133,7 +133,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="display-window-plant" role="group" aria-label="Plant" onkeydown={keydown}>
-  <ProposalsChip entries={proposals} open={entry => openDisplay(`${objectId}#${entry.item}`)} />
+  <ProposalsChip entries={proposals} open={entry => openDisplay(reviewSubject(objectId, entry))} />
   <button
     bind:this={logButton}
     type="button"

@@ -4,7 +4,7 @@ import type { ListedItem, ListedReset } from '../../../operations/instance-ports
 import type { OperationRecord, ResetRecord } from '../../../operations/plant-operations.ts'
 import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../operations/proposals.ts'
 import type { Observable, Observation } from '../../../../../core/observation/model.ts'
-import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../../../ui/simulation-run-client.ts'
+import { invokeSimulationRunCapability, querySimulationRunCapability, type SimulationRunRequestOptions } from '../../../../../ui/simulation-run-client.ts'
 
 // The operation capabilities the Plant's panels use, each through the Run's
 // one capability endpoint as the screen's own actor: a person's command goes
@@ -71,39 +71,57 @@ export interface OperationClient {
 export const OPERATION_READ_TIMEOUT_MS = 10_000
 const timed = () => ({ signal: AbortSignal.timeout(OPERATION_READ_TIMEOUT_MS) })
 
-const commandOutcome = async (runId: SimulationRunId, capabilityId: string, input: unknown): Promise<OperationOutcome> => {
-  const response = await invokeSimulationRunCapability(runId, { capabilityId, input })
-  if (response.kind !== 'command') throw new Error(`${capabilityId} is not a command`)
-  return response.result.ok ? { ok: true, commandId: response.result.commandId } : { ok: false, reason: response.result.reason }
+/** How the client reaches the Run's capabilities: the browser's one endpoint, or a Run in process (the operation flow test). */
+export interface OperationTransport {
+  readonly query: <T>(runId: SimulationRunId, capabilityId: string, input: unknown, options?: SimulationRunRequestOptions) => Promise<T>
+  readonly command: (runId: SimulationRunId, capabilityId: string, input: unknown) => Promise<{ readonly ok: true; readonly commandId: string } | { readonly ok: false; readonly reason: string }>
 }
 
-export const operationClient: OperationClient = {
-  controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, ...(items === null ? {} : { items: [...items] }) }, timed()),
-  validate: async (runId, plantId, write) => {
-    const result = await querySimulationRunCapability<{ readonly accepted: boolean; readonly reason?: string }>(runId, 'world.process-plant.control.validate', { plantId, path: write.path, value: write.value }, timed())
-    if (result.accepted) return { accepted: true }
-    if (result.reason === undefined) throw new Error('control.validate refused a write without a reason')
-    return { accepted: false, reason: result.reason }
-  },
-  write: (runId, plantId, write) => commandOutcome(runId, 'world.process-plant.control.write', { plantId, path: write.path, value: write.value }),
-  reset: (runId, plantId, ruleId) => commandOutcome(runId, 'world.process-plant.actuation.reset', { plantId, ruleId }),
-  decide: (runId, plantId, proposalId, decision, reason) =>
-    commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
-  proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),
-  read: async (runId, plantId, paths, observed = false) => {
-    const read = await querySimulationRunCapability<{
-      readonly operations: Pick<PlantRead, 'log' | 'resets'> & { readonly simulationTime: string; readonly plantElapsedMs: number }
-      readonly signals: ReadonlyArray<{
-        readonly signal: { readonly path: string }; readonly variable: { readonly value: ProcessVariableValue; readonly unit: string }
-        readonly observed?: ObservedSignal | null
-      }>
-    }>(runId, 'world.process-plant.signals.read', { plantId, signals: paths.map(path => ({ path })), operations: true, ...(observed ? { observed } : {}) }, timed())
-    return {
-      sample: { simulationTime: read.operations.simulationTime, plantElapsedMs: read.operations.plantElapsedMs, values: read.signals.map(entry => ({ path: entry.signal.path, value: entry.variable.value })) },
-      units: new Map(read.signals.map(entry => [entry.signal.path, entry.variable.unit])),
-      log: read.operations.log,
-      resets: read.operations.resets,
-      observed: new Map(read.signals.flatMap(entry => entry.observed === undefined ? [] : [[entry.signal.path, entry.observed] as const])),
-    }
-  },
+/** The operation client over a transport. */
+export const createOperationClient = (transport: OperationTransport): OperationClient => {
+  const querySimulationRunCapability = transport.query
+  const commandOutcome = async (runId: SimulationRunId, capabilityId: string, input: unknown): Promise<OperationOutcome> => {
+    const result = await transport.command(runId, capabilityId, input)
+    return result.ok ? { ok: true, commandId: result.commandId } : { ok: false, reason: result.reason }
+  }
+  return {
+    controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, ...(items === null ? {} : { items: [...items] }) }, timed()),
+    validate: async (runId, plantId, write) => {
+      const result = await querySimulationRunCapability<{ readonly accepted: boolean; readonly reason?: string }>(runId, 'world.process-plant.control.validate', { plantId, path: write.path, value: write.value }, timed())
+      if (result.accepted) return { accepted: true }
+      if (result.reason === undefined) throw new Error('control.validate refused a write without a reason')
+      return { accepted: false, reason: result.reason }
+    },
+    write: (runId, plantId, write) => commandOutcome(runId, 'world.process-plant.control.write', { plantId, path: write.path, value: write.value }),
+    reset: (runId, plantId, ruleId) => commandOutcome(runId, 'world.process-plant.actuation.reset', { plantId, ruleId }),
+    decide: (runId, plantId, proposalId, decision, reason) =>
+      commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
+    proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),
+    read: async (runId, plantId, paths, observed = false) => {
+      const read = await querySimulationRunCapability<{
+        readonly operations: Pick<PlantRead, 'log' | 'resets'> & { readonly simulationTime: string; readonly plantElapsedMs: number }
+        readonly signals: ReadonlyArray<{
+          readonly signal: { readonly path: string }; readonly variable: { readonly value: ProcessVariableValue; readonly unit: string }
+          readonly observed?: ObservedSignal | null
+        }>
+      }>(runId, 'world.process-plant.signals.read', { plantId, signals: paths.map(path => ({ path })), operations: true, ...(observed ? { observed } : {}) }, timed())
+      return {
+        sample: { simulationTime: read.operations.simulationTime, plantElapsedMs: read.operations.plantElapsedMs, values: read.signals.map(entry => ({ path: entry.signal.path, value: entry.variable.value })) },
+        units: new Map(read.signals.map(entry => [entry.signal.path, entry.variable.unit])),
+        log: read.operations.log,
+        resets: read.operations.resets,
+        observed: new Map(read.signals.flatMap(entry => entry.observed === undefined ? [] : [[entry.signal.path, entry.observed] as const])),
+      }
+    },
+  }
 }
+
+/** The browser's client: the Run's one capability endpoint, as the screen's own actor. */
+export const operationClient: OperationClient = createOperationClient({
+  query: querySimulationRunCapability,
+  command: async (runId, capabilityId, input) => {
+    const response = await invokeSimulationRunCapability(runId, { capabilityId, input })
+    if (response.kind !== 'command') throw new Error(`${capabilityId} is not a command`)
+    return response.result.ok ? { ok: true, commandId: response.result.commandId } : { ok: false, reason: response.result.reason }
+  },
+})

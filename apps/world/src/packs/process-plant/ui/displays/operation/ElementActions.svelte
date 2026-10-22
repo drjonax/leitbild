@@ -8,6 +8,7 @@
   import ControlSection from './ControlSection.svelte'
   import ProposalSection from './ProposalSection.svelte'
   import { operationClient, type OperationOutcome, type PlantRead } from './operation-client.ts'
+  import { operatedItems, readElementOperation } from './element-operation.ts'
   import { citedMargin, ratePerMinute, type CitedReading } from './cited-reading.ts'
   import { itemControlView, operationNow, proposalCard, shownProposal, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
 
@@ -43,32 +44,21 @@
   let draft = $state.raw<{ readonly write: Write; readonly at: number } | null>(null)
 
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
-  // What its controls write and read, what it withholds, what holds it and what its proposals cite: the read names its time.
-  const pathsOf = (entry: ListedItem, holding: ReadonlyArray<ListedReset>, cited: ReadonlyArray<ProcessPlantProposal>): ReadonlyArray<string> => [...new Set([
-    ...entry.offered.flatMap(control => [String(control.control.path), ...(control.control.state === undefined ? [] : [String(control.control.state)])]),
-    ...entry.withheld.map(control => String(control.path)),
-    ...holding.flatMap(reset => reset.holds.map(String)),
-    ...cited.flatMap(proposal => proposal.evidence.map(evidence => String(evidence.path))),
-  ])]
 
   let reading = false
   const refresh = async (): Promise<void> => {
     if (reading) return
     reading = true
     try {
-      operated ??= (await client.controls(runId, objectId, null)).items.some(entry => entry.id === elementId)
+      operated ??= (await operatedItems(client, runId, objectId)).has(elementId)
       if (!operated) return
-      const [listed, held] = await Promise.all([client.controls(runId, objectId, [elementId]), client.proposals(runId, objectId)])
-      const entry = listed.items[0]!
-      const holding = listed.resets.filter(reset => reset.items.includes(elementId))
-      const own = held.proposals.map(heldEntry => heldEntry.proposal).filter(proposal => proposal.item === elementId)
-      const paths = pathsOf(entry, holding, own)
-      read = paths.length === 0 ? null : await client.read(runId, objectId, paths, own.length > 0)
-      if (read !== null) extendHistories(read, [...new Set(own.flatMap(proposal => proposal.evidence.map(evidence => String(evidence.path))))])
-      item = entry
-      resets = holding
-      proposals = own
-      reviews = new Map(held.proposals.flatMap(heldEntry => heldEntry.review === undefined ? [] : [[heldEntry.proposal.id, heldEntry.review] as const]))
+      const next = await readElementOperation(client, runId, objectId, elementId)
+      read = next.read
+      if (read !== null) extendHistories(read, [...new Set(next.proposals.flatMap(proposal => proposal.evidence.map(evidence => String(evidence.path))))])
+      item = next.item
+      resets = next.resets
+      proposals = next.proposals
+      reviews = next.reviews
       failure = null
     } catch (error) {
       failure = `Controls cannot be read: ${messageOf(error)}`

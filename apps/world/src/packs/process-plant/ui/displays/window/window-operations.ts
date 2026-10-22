@@ -26,6 +26,9 @@ export interface WindowPlant {
   readonly label: string
 }
 
+/** Where a pending proposal is reviewed: its item's World default on the Plant (`<objectId>#<item>`), whose pop-over carries its card. */
+export const reviewSubject = (objectId: string, entry: Pick<ProposalListEntry, 'item'>): string => `${objectId}#${entry.item}`
+
 /** The Plant as its dialogs name it, from the Run's Plants. */
 export const readWindowPlant = async (runId: SimulationRunId, plantId: string): Promise<WindowPlant> => {
   const listed = await querySimulationRunCapability<{ readonly plants: ReadonlyArray<{ readonly id: string; readonly label: string }> }>(runId, 'world.process-plant.plants.list', {})
