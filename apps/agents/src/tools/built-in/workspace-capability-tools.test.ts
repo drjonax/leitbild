@@ -497,12 +497,11 @@ describe('Workspace progressive-discovery tools', () => {
   test('the model reads a view by reference: its opaque state and envelope stay in the execution evidence', async () => {
     const state = JSON.stringify({ composition: { title: 'Pressure', panels: [{ kind: 'trend', signals: ['PZR-P'] }] }, issuedAt: now })
     const view = { viewType: 'process-plant.display', title: 'Pressure', height: 340, state }
-    const viewContent = { items: [{ names: ['PZR-P'], values: [{ value: 15.5, unit: 'MPa' }], limits: [], history: true }], span: null, lead: null }
     const viewFetch = (async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init)
       if (!new URL(request.url).pathname.endsWith('/invoke')) return catalogFetch([])(input, init)
       const { input: asked } = await request.json() as { input: { display?: true } }
-      return Response.json({ result: asked.display === true ? { view, shows: ['trend'], viewContent } : { state: 'running' } })
+      return Response.json({ result: asked.display === true ? { view, shows: ['trend'] } : { state: 'running' } })
     }) as typeof fetch
     const [, call] = createWorkspaceCapabilityTools({ workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'resource', resource: run }), fetchImpl: viewFetch })
     const raw = await call!.execute({ calls: [
@@ -518,7 +517,7 @@ describe('Workspace progressive-discovery tools', () => {
     const [display, plain, refused] = (shown.data as { results: ReadonlyArray<Record<string, unknown>> }).results
     expect(display).toEqual({
       key: 'display', operationId: readId, target: runTarget, success: true, viewRef: 'call_0_0/display',
-      data: { view: { viewType: 'process-plant.display', title: 'Pressure', height: 340 }, shows: ['trend'], viewContent },
+      data: { view: { viewType: 'process-plant.display', title: 'Pressure', height: 340 }, shows: ['trend'] },
     })
     expect(JSON.stringify(shown)).not.toContain('composition')
     const [, rawPlain, rawRefused] = (raw.data as { results: ReadonlyArray<Record<string, unknown>> }).results

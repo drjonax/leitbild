@@ -314,150 +314,6 @@ describe('evaluation required view (display requests)', () => {
   })
 })
 
-describe('evaluation answer-display consistency', () => {
-  const fenced = (text: string): string => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
-  // Run 19 rcp-trip: the answer cited a loop flow its display did not show,
-  // which the offline grounding metrics measure; it is no correction turn.
-  const unshown = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
-  // A current value its display reads otherwise.
-  const inconsistent = fenced('Core cooling is not confirmed. CET-AVG is currently 290 °C.')
-  const corrected = fenced('Core cooling is not confirmed. CET-AVG is currently 302.4 °C.')
-  const viewContent = {
-    items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }],
-    span: { shownMs: 60_000, horizonMs: 120_000 },
-    lead: null,
-  }
-  const run = async (answers: ReadonlyArray<string>, data: unknown = { viewContent }) => {
-    const scripted = [
-      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] },
-      ...answers.map(content => ({ content })),
-    ]
-    let index = 0
-    const calls: ChatRequest[] = []
-    const provider: LLMProvider = {
-      models: async () => [],
-      chat: async request => { calls.push(request); return { ...mkResponse(''), ...scripted[index++]! } },
-    }
-    const executor = async () => [{
-      success: true,
-      data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data, viewRef: 'call_0_0/compose' }] },
-    }]
-    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
-      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
-    })
-    return { calls, result }
-  }
-
-  test('an answer citing a value its display contradicts is corrected once, naming each issue', async () => {
-    const { calls, result } = await run([inconsistent, corrected])
-    expect(calls).toHaveLength(3)
-    const correction = calls[2]!.messages.at(-1)!.content
-    expect(correction).toContain('- It cites 290 °C as current, but the display reads CET-AVG 302 °C now.')
-    expect(correction).toContain('mark one from elsewhere "(not shown)"')
-    expect(correction).not.toMatch(/\b(?:below|above) the answer\b/)
-    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
-  })
-
-  test('a value the display does not show, a window, a lead or a watch item costs no correction turn', async () => {
-    const { calls, result } = await run([unshown])
-    expect(calls).toHaveLength(2)
-    expect(result.decision.response).toEqual({ action: 'respond', content: unshown })
-  })
-
-  test('a second contradiction is posted as it is: one correction per answer', async () => {
-    const { calls, result } = await run([inconsistent, inconsistent])
-    expect(calls).toHaveLength(3)
-    expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
-  })
-
-  test('equivalent physical units do not incur a false correction', async () => {
-    const answer = fenced('Pressurizer pressure is 15.5 MPa.')
-    const { calls, result } = await run([answer], { viewContent: { ...viewContent, items: [
-      { names: ['Pressurizer pressure'], values: [{ value: 15500, unit: 'kPa' }], limits: [], history: false },
-    ] } })
-    expect(calls).toHaveLength(2)
-    expect(result.decision.response).toEqual({ action: 'respond', content: answer })
-  })
-
-  const legsAndLevel = { viewContent: { ...viewContent, items: [
-    { names: ['Hot leg temperature'], values: [{ value: 300, unit: '°C' }], limits: [], history: false },
-    { names: ['Cold leg temperature'], values: [{ value: 290, unit: '°C' }], limits: [], history: false },
-    { names: ['Steam generator level'], values: [{ value: 55, unit: '%' }], limits: [], history: true },
-  ] } }
-
-  test('swapped subjects remain a model quality case: the check compares with what is shown, it does not certify prose', async () => {
-    // Both values are on the display, each beside the other leg's name; the
-    // check does not bind a value to the item a sentence names, so it passes.
-    const answer = fenced('Hot leg temperature is 290 °C. Cold leg temperature is 300 °C.')
-    const { calls, result } = await run([answer], legsAndLevel)
-    expect(calls).toHaveLength(2)
-    expect(result.decision.response).toEqual({ action: 'respond', content: answer })
-  })
-
-  test('a current value the display contradicts is corrected once', async () => {
-    // The display reads the level at 55 % now. 99 % may be an earlier value of
-    // its trend, but the answer states it as the current reading: a false
-    // current claim the operator would read beside the display.
-    const answer = fenced('Steam generator level is currently 99 percent.')
-    const fixed = fenced('Steam generator level is currently 55 percent.')
-    const { calls, result } = await run([answer, fixed], legsAndLevel)
-    expect(calls).toHaveLength(3)
-    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 99 percent as current, but the display reads Steam generator level 55 % now.')
-    expect(result.decision.response).toEqual({ action: 'respond', content: fixed })
-  })
-
-  test('malformed structured display evidence still fails loudly', async () => {
-    const { result } = await run([corrected], { viewContent: { items: 'not-an-array' } })
-    expect(result.decision.response.action).toBe('error')
-  })
-
-  test('an answer agreeing with its display, or a view without published content, costs no extra call', async () => {
-    expect((await run([corrected])).calls).toHaveLength(2)
-    expect((await run([inconsistent], {})).calls).toHaveLength(2)
-  })
-
-  test('the model reads a display by reference; both checks still read the evidence it left out', async () => {
-    // A composed display carries its opaque state twice: in the published view and in the completed envelope.
-    const state = JSON.stringify({ composition: { title: 'Core cooling', panels: [{ kind: 'trend', signals: [{ ref: 'CET-AVG' }] }] } })
-    const view = { viewType: 'process-plant.composed-display', title: 'Core cooling', height: 340, state }
-    const subject = { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }
-    const display = {
-      success: true,
-      data: { results: [{
-        key: 'compose', operationId: 'world.process-plant.display.compose', success: true,
-        data: { view, shows: ['trend'], viewContent }, embeddedView: { ...view, moduleId: 'world', subject }, viewRef: 'call_0_0/compose',
-      }] },
-    }
-    const scripted = [
-      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] },
-      { content: inconsistent },
-      { content: corrected },
-    ]
-    let index = 0
-    const calls: ChatRequest[] = []
-    const provider: LLMProvider = {
-      models: async () => [],
-      chat: async request => { calls.push(structuredClone(request)); return { ...mkResponse(''), ...scripted[index++]! } },
-    }
-    const result = await evaluate(mkContext(), mkConfig(), provider, async () => [display], 5, 'room-1', {
-      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
-    })
-    const evidence = calls[1]!.messages.find(message => message.role === 'tool')!.content
-    expect(evidence).not.toContain('composition')
-    expect(evidence).not.toContain('embeddedView')
-    expect(JSON.parse(evidence)).toEqual({ results: [{
-      key: 'compose', operationId: 'world.process-plant.display.compose', success: true, viewRef: 'call_0_0/compose',
-      data: { view: { viewType: 'process-plant.composed-display', title: 'Core cooling', height: 340 }, shows: ['trend'], viewContent },
-    }] })
-    // The contradiction check read viewContent from the raw result, and the fence check its viewRef.
-    expect(calls).toHaveLength(3)
-    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 290 °C as current, but the display reads CET-AVG 302 °C now.')
-    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
-    expect(result.decision.toolTrace![0]!.resultBytes).toBe(new TextEncoder().encode(evidence).byteLength)
-    expect(display.data.results[0]!.embeddedView.state).toBe(state)
-  })
-})
-
 describe('evaluation card citations', () => {
   const at = { at: '2026-01-01T10:16:00.000Z', clock: 'simulation' }
   const loading = { at, more: 0, adjusted: [], items: [
@@ -521,6 +377,41 @@ describe('evaluation card citations', () => {
     expect(result.decision.response).toEqual({ action: 'respond', content: wrong })
   })
 
+  test('the model reads a vignette by reference and its card as lines; the check reads the evidence it left out', async () => {
+    const state = JSON.stringify({ title: 'Loading', views: [{ kind: 'values', refs: ['grid:g#line-a.loading'] }] })
+    const view = { viewType: 'display.vignette', title: 'Loading', height: 240, state }
+    const subject = { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }
+    const display = { success: true, data: { results: [{
+      key: 'compose', operationId: 'world.simulation-run.display.compose', success: true,
+      data: { view, card: loading }, embeddedView: { ...view, moduleId: 'world', subject }, viewRef: 'call_0_0/compose',
+    }] } }
+    const fenced = (text: string) => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
+    const scripted = [
+      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] },
+      { content: fenced('Line A is at 95.0 % ⟦k1⟧.') },
+      { content: fenced('Line A is at 91.3 % ⟦k1⟧.') },
+    ]
+    let index = 0
+    const calls: ChatRequest[] = []
+    const provider: LLMProvider = { models: async () => [], chat: async request => { calls.push(structuredClone(request)); return { ...mkResponse(''), ...scripted[index++]! } } }
+    const result = await evaluate(mkContext(), mkConfig(), provider, async () => [display], 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+    })
+    const evidence = calls[1]!.messages.find(message => message.role === 'tool')!.content
+    expect(evidence).not.toContain('grid:g#line-a')
+    expect(evidence).not.toContain('embeddedView')
+    expect(JSON.parse(evidence)).toEqual({ results: [{
+      key: 'compose', operationId: 'world.simulation-run.display.compose', success: true, viewRef: 'call_0_0/compose',
+      data: { view: { viewType: 'display.vignette', title: 'Loading', height: 240 }, card: ['card at 2026-01-01T10:16:00.000Z (simulation)', 'k1 · Line A · loading · 91.3 %', 'k2 · Line B · loading · 92.2 %'] },
+    }] })
+    // The citation check read the raw card, and the fence check its viewRef.
+    expect(calls).toHaveLength(3)
+    expect(calls[2]!.messages.at(-1)!.content).toContain('- 95.0 is cited with ⟦k1⟧, but k1 reads "91.3 %" (Line A · loading).')
+    expect(result.decision.response).toEqual({ action: 'respond', content: fenced('Line A is at 91.3 % ⟦k1⟧.') })
+    expect(result.decision.toolTrace![0]!.resultBytes).toBe(new TextEncoder().encode(evidence).byteLength)
+    expect(display.data.results[0]!.embeddedView.state).toBe(state)
+  })
+
   test('a card that breaks the contract fails the turn loudly', async () => {
     const { result } = await run(['Fine.'], [{ items: 'none' }])
     expect(result.decision.response.action).toBe('error')
@@ -572,14 +463,14 @@ describe('evaluation operation claims', () => {
 
 describe('evaluation correction causes', () => {
   // Every pass that sends an answer back is logged, before it runs, with why.
-  const fenced = (ref: string): string => `CET-AVG is currently 290 °C.\n\n\`\`\`leitbild-view\nview ${ref}\n\`\`\``
-  const viewContent = { items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }], span: null, lead: null }
+  const fenced = (ref: string): string => `Core exit is at 290.0 °C ⟦k1⟧.\n\n\`\`\`leitbild-view\nview ${ref}\n\`\`\``
+  const card = { at: { at: '2026-01-01T10:16:00.000Z', clock: 'simulation' }, more: 0, adjusted: [], items: [{ key: 'k1', label: 'Unit · Core exit temperature', reading: '302.4 °C', unit: 'degC', numbers: [{ value: 302.4, decimals: 1 }] }] }
   const corrections = async (answers: ReadonlyArray<{ content: string; toolCalls?: ChatResponse['toolCalls'] }>, requireView = false) => {
     let index = 0
     const provider: LLMProvider = { models: async () => [], chat: async () => ({ ...mkResponse(''), ...answers[Math.min(index++, answers.length - 1)]! }) }
     const executor = async (calls: ReadonlyArray<{ callId?: string }>) => [{
       success: true,
-      data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data: { viewContent }, viewRef: `${calls[0]!.callId}/compose` }] },
+      data: { results: [{ key: 'compose', operationId: 'world.simulation-run.display.compose', success: true, data: { card }, viewRef: `${calls[0]!.callId}/compose` }] },
     }]
     const events: Array<{ kind: string; causes?: ReadonlyArray<string>; issues?: ReadonlyArray<string> }> = []
     await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
@@ -600,7 +491,7 @@ describe('evaluation correction causes', () => {
     const map = await corrections([{ content: '```map\n{"features":[{"type":"marker","lat":999,"lng":5}]}\n```' }, { content: 'fixed' }])
     expect(map.map(event => event.causes)).toEqual([['map-fence']])
     expect(await corrections([compose, { content: fenced('call_0_0/compose') }, { content: fenced('call_0_0/compose') }])).toEqual([
-      { kind: 'correction', causes: ['contradiction'], issues: ['It cites 290 °C as current, but the display reads CET-AVG 302 °C now.'] },
+      { kind: 'correction', causes: ['contradiction'], issues: ['290.0 is cited with ⟦k1⟧, but k1 reads "302.4 °C" (Unit · Core exit temperature).'] },
     ])
   })
 
