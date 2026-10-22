@@ -28,6 +28,7 @@ import { processPlantProposalSchema } from './operations/proposals.ts'
 import { operationConsequenceSchema } from './operations/consequence.ts'
 import { processPlantQueryKinds } from './query.ts'
 import { processPlantActions } from './actions.ts'
+import { faultActionIds, writesFault } from './operations/fault-acts.ts'
 import { processPlantActionsSearchInputSchema, processPlantCatalogInputSchema } from './queries/catalog-query.ts'
 import {
   assessmentsEvaluateQuerySchema,
@@ -301,6 +302,8 @@ const commandCapability = <T extends { readonly plantId: string }>(config: {
   readonly risk?: 'write' | 'destructive'
   /** A command result that says more than accepted or refused; the core result where absent. */
   readonly output?: z.ZodType
+  /** Whether the command injects a fault the Run's AI agents are not to learn of (operations/fault-acts.ts). */
+  readonly withheldFromAgents?: (payload: unknown) => boolean
 }) => defineSimulationCommandCapability({
   ...config,
   risk: config.risk ?? 'write',
@@ -329,12 +332,14 @@ export const processPlantCapabilities = [
     title: 'Write process control',
     description: 'Write one validated Process Plant signal or variable. An AI agent proposes instead (world.process-plant.control.propose) unless it drives an active procedure Run on the Plant or the Plant opts into direct AI operation.',
     input: processPlantControlWritePayloadSchema,
+    withheldFromAgents: payload => { const { path } = processPlantControlWritePayloadSchema.parse(payload); return path !== undefined && writesFault(path) },
   }),
   commandCapability({
     id: processPlantControlRampCommandKind,
     title: 'Ramp process control',
     description: 'Ramp one Process Plant signal or variable to a target over simulation time. An AI agent proposes instead (world.process-plant.control.propose) unless it drives an active procedure Run on the Plant or the Plant opts into direct AI operation.',
     input: processPlantControlRampPayloadSchema,
+    withheldFromAgents: payload => { const { path } = processPlantControlRampPayloadSchema.parse(payload); return path !== undefined && writesFault(path) },
   }),
   commandCapability({
     id: processPlantControlProposeCommandKind,
@@ -368,6 +373,7 @@ export const processPlantCapabilities = [
     searchTerms: processPlantActions.flatMap(action => [action.id, action.title, action.description]),
     input: processPlantActionInvokePayloadSchema,
     risk: 'write',
+    withheldFromAgents: payload => faultActionIds().has(processPlantActionInvokePayloadSchema.parse(payload).actionId),
   }),
   ...processPlantQueryCapabilities,
   defineObservationCapability('declarations', {

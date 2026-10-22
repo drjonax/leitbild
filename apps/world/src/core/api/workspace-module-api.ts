@@ -306,6 +306,8 @@ const simulationChangesSchema = z.object({
   afterSequence: z.number().int().nonnegative(),
   currentSequence: z.number().int().nonnegative(),
   events: z.array(simulationRunEventSchema),
+  /** Events of the page an AI caller does not learn of (an injected fault's command and its result), counted only. */
+  withheld: z.number().int().positive().optional(),
   hasMore: z.boolean(),
   nextSequence: z.number().int().nonnegative(),
 }).strict()
@@ -735,6 +737,26 @@ const startedProcedureRun = async (runtime: ApiRunRuntime, invocation: ApiInvoca
     pinned: { runId: run.runId, sourceId: run.sourceId, sourceRevision: run.sourceRevision, sourcePath: run.sourcePath },
     ...(invocation.access.actor.kind === 'ai' ? await nextProcedureStep(runtime, invocation, run.runId, 'The start was accepted') : {}),
   }
+}
+
+/**
+ * The commands an AI caller does not learn of (D-88, D13): those a Capability withholds from agents (an injected
+ * fault, as its Pack judges the payload), by command id over the whole journal. None for people.
+ */
+const withheldCommands = (registry: SimulationRunRegistry, runtime: ApiRunRuntime, invocation: ApiInvocation): ReadonlySet<string> => {
+  if (invocation.access.actor.kind !== 'ai') return new Set()
+  const withheld = new Map(registry.installedCapabilities.flatMap(({ capability }) => capability.withheldFromAgents === undefined ? [] : [[capability.id, capability.withheldFromAgents] as const]))
+  return new Set(runtime.events().flatMap(event => event.type === 'command.issued' && withheld.get(event.command.kind)?.(event.command.payload) === true ? [event.command.id] : []))
+}
+
+/** A page of the journal as the caller may read it, and how many events it withholds from an AI caller (counted, never shown). */
+const readableChangeEvents = (
+  registry: SimulationRunRegistry, runtime: ApiRunRuntime, invocation: ApiInvocation,
+  page: ReturnType<ApiRunRuntime['events']>,
+): { readonly events: ReturnType<ApiRunRuntime['events']>; readonly withheld: number } => {
+  const withheld = withheldCommands(registry, runtime, invocation)
+  const kept = withheld.size === 0 ? page : page.filter(event => !(event.type === 'command.issued' && withheld.has(event.command.id)) && !(event.type === 'command.result' && withheld.has(event.result.commandId)))
+  return { events: visibleChangeEvents(runtime, invocation, kept), withheld: page.length - kept.length }
 }
 
 const visibleChangeEvents = (
@@ -1556,7 +1578,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
         caller,
         driven: drivenRunsOf(caller, runtime.snapshot().procedures?.runs ?? [], runtime.events()),
         ports: {
-          events: afterSequence => visibleChangeEvents(runtime, invocation, runtime.events({ afterSeq: afterSequence })),
+          events: afterSequence => readableChangeEvents(registry, runtime, invocation, runtime.events({ afterSeq: afterSequence })).events,
           sequence: () => runtime.snapshot().seq,
           clock,
           subscribe: wake => runtime.subscribe(() => wake()),
@@ -1580,7 +1602,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       kind: 'query',
       scope: { kind: 'resource', resourceType: 'world.simulation-run' },
       title: 'Read Simulation Changes',
-      description: 'Reads a bounded page of committed changes after a known simulation sequence so an Agent can stay current without re-reading the whole World.',
+      description: 'Reads a bounded page of committed changes after a known simulation sequence so an Agent can stay current without re-reading the whole World. An AI caller does not read a command that injects a fault, nor its result: withheld counts them.',
       risk: 'read',
       idempotent: true,
       inputSchema: z.toJSONSchema(readChangesInputSchema, { io: 'input' }),
@@ -1591,12 +1613,13 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       const input = readChangesInputSchema.parse(invocation.input)
       const available = runtime.events({ afterSeq: input.afterSequence })
       const page = available.slice(0, input.limit)
-      const events = visibleChangeEvents(runtime, invocation, page)
+      const { events, withheld } = readableChangeEvents(registry, runtime, invocation, page)
       const currentSequence = runtime.snapshot().seq
       return json({ result: {
         afterSequence: input.afterSequence,
         currentSequence,
         events,
+        ...(withheld === 0 ? {} : { withheld }),
         hasMore: available.length > page.length,
         nextSequence: page.at(-1)?.seq ?? input.afterSequence,
       } })

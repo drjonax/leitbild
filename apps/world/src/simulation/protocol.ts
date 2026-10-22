@@ -172,6 +172,11 @@ export interface SimulationCapability {
     readonly targetObjectIds: ReadonlyArray<ObjectId>
     readonly payload: unknown
   }
+  /**
+   * Whether a command with this payload sets up what the Run's AI agents are not to learn of (an injected fault,
+   * D-88, D13): its journal events reach an AI caller only as a count. People and the instructor see them whole.
+   */
+  readonly withheldFromAgents?: (payload: unknown) => boolean
 }
 
 export interface PackRuntimeAdapter {

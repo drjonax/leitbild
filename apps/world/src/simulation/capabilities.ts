@@ -19,13 +19,16 @@ export const defineSimulationCapability = (config: SimulationCapability): Simula
   if (config.kind === 'query' && config.buildCommand !== undefined) {
     throw new Error(`Query Capability ${config.id} cannot declare command targets`)
   }
+  if (config.kind === 'query' && config.withheldFromAgents !== undefined) {
+    throw new Error(`Query Capability ${config.id} issues no command to withhold`)
+  }
   if (config.kind === 'command' && config.buildCommand === undefined) {
     throw new Error(`Command Capability ${config.id} must build a command`)
   }
   return Object.freeze(config)
 }
 
-export const defineSimulationQueryCapability = (config: Omit<SimulationCapability, 'kind' | 'risk' | 'idempotent' | 'schedulable' | 'buildCommand'>): SimulationCapability =>
+export const defineSimulationQueryCapability = (config: Omit<SimulationCapability, 'kind' | 'risk' | 'idempotent' | 'schedulable' | 'buildCommand' | 'withheldFromAgents'>): SimulationCapability =>
   defineSimulationCapability({ ...config, kind: 'query', risk: 'read', idempotent: true })
 
 export const defineSimulationCommandCapability = (config: Omit<SimulationCapability, 'kind' | 'risk'> & {
