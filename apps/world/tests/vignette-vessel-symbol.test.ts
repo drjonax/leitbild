@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { insertedFraction, ROD_SHOWN, VESSEL_SHAPE, vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
+import { ROD_SHOWN, VESSEL_SHAPE, vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
 
 // The reactor vessel's geometry as the vignette draws it: a pure function of
 // the drawn box, its level and its rod banks' insertion.
@@ -11,17 +11,6 @@ const overview = (level: number | null, groups: ReadonlyArray<ReadonlyArray<numb
   vesselGeometry({ height: 168, origin, drawing: { core: 'overlap', span: { x: 0, width: 48 }, nozzles }, level, groups })
 
 describe('the reactor vessel symbol', () => {
-  test('a part is in by its reading over its range, from the end it is out at', () => {
-    const range = { min: 0, max: 228 }
-    expect(insertedFraction(228, range, 'min')).toBe(0)
-    expect(insertedFraction(0, range, 'min')).toBe(1)
-    expect(insertedFraction(114, range, 'min')).toBe(0.5)
-    expect(insertedFraction(57, range, 'max')).toBe(0.25)
-    expect(insertedFraction(300, range, 'min')).toBe(0)
-    expect(insertedFraction(null, range, 'min')).toBeNull()
-    expect(insertedFraction(Number.NaN, range, 'min')).toBeNull()
-  })
-
   test('collars where its pipes reach it, a head above them, and its core region over the bottom of its body', () => {
     const shape = overview(100, [[0, 0, 0, 0], [0, 0, 0, 8 / 228]])
     expect(shape.collars).toHaveLength(8)

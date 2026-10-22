@@ -228,6 +228,7 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
       drawing.devices.push({ id: node.id, element, glyph: glyphOf(symbol, state, vertical), x: centre[0], y: centre[1], on: passing(state), unknown: state.kind === 'unknown', vertical, orientation: vertical && symbol !== 'mover' ? 'verticalRight' : 'horizontal', tone, title })
     } else if (symbol === 'tank' || symbol === 'exchanger' || symbol === 'vessel') {
       const level = view.bindings.find(binding => binding.role === 'level')
+      // A vessel's parts hang in by their position bindings: a part's inserted share, 1 fully in, as the role declares.
       const parts = view.bindings.filter(binding => binding.role === 'position').map(binding => { const value = percent(binding); return value === null ? null : value / 100 })
       const nozzles = Object.values(node.ports).map(port => ({ x: px(port.x), y: px(port.y), face: port.face as Face }))
       drawing.vessels.push({

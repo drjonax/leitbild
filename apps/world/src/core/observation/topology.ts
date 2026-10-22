@@ -12,7 +12,7 @@ import { objectIdSchema } from '../model/ids.ts'
 const id = z.string().min(1).max(200)
 const rank = z.string().min(1).max(120)
 const end = z.object({ node: id, port: id }).strict()
-/** What a binding drives in a drawing; `position` is a fraction of travel (a valve's opening, a rod bank's insertion). */
+/** What a binding drives in a drawing; `position` is a fraction of travel: a valve's opening (1 open), or a part's insertion (a rod bank's, 1 fully in). */
 const bindings = z.array(z.object({
   role: z.enum(['flow', 'loading', 'level', 'conducting', 'available', 'running', 'position', 'value']),
   ref: observableRefSchema,

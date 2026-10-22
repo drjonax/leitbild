@@ -9,8 +9,11 @@ import { flowLayout } from '../src/features/displays/topology/flow-sizing.ts'
 import { groupName, type TopologyLayout } from '../src/features/displays/topology/layout.ts'
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { derivedObservables, insertedShare, readDerived } from '../src/packs/process-plant/observation/derived.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
+import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { flowDrawing, glyphOf, symbolOf } from '../src/ui/embed/vignette/flow-symbols.ts'
+import { vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
 import { VIGNETTE_ROW_PX } from '../src/ui/embed/vignette/grid.ts'
 import { drawingScale } from '../src/ui/embed/vignette/network.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
@@ -258,3 +261,36 @@ describe('scaled drawings', () => {
     expect(layout.width * VIGNETTE_ROW_PX * scale).toBeLessThan(layout.width * VIGNETTE_ROW_PX)
   })
 })
+
+describe('a part an item inserts, from the plant\'s reading to the drawn bar', () => {
+  test('a rod bank\'s raw steps withdrawn, read through its position binding, hang its bar in the core by the share it is in', () => {
+    // The plant declares where its parts are fully in (insertedAt): rods are in at zero steps withdrawn.
+    expect([insertedShare(228, { min: 0, max: 228 }, 'min'), insertedShare(0, { min: 0, max: 228 }, 'min'), insertedShare(114, { min: 0, max: 228 }, 'min')]).toEqual([0, 1, 0.5])
+    expect([insertedShare(57, { min: 0, max: 228 }, 'max'), insertedShare(300, { min: 0, max: 228 }, 'min'), insertedShare(Number.NaN, { min: 0, max: 228 }, 'min')]).toEqual([0.25, 0, null])
+    const objectId = 'plant:rods' as never
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:rods', loopCount: 4 }))
+    // The unit's declared overview, the drawing the core stands in at the top of every unit's display.
+    const scoped = overviewOf(servedPlantTopology(objectId, plant))!
+    const declared = new Map(derivedObservables(objectId, plant).map(observable => [observable.ref, observable]))
+    const section = topologySection('plant:rods', 'process-plant', scoped, flowLayout(scoped, ROOM)!, 37, ref => declared.get(ref)) as Topology
+    const core = section.nodes.find(node => node.id === 'core')!
+    const banks = core.bindings.filter(binding => binding.role === 'position')
+    expect(banks).toHaveLength(8)
+    // The plant's raw reading: every bank at these steps withdrawn, read as the plant reads its derived observables.
+    const drawnAt = (steps: number) => {
+      const system = { plant, runtime: { readVariableSnapshot: () => ({ value: steps }) } } as unknown as ProcessPlantRuntimeInstance
+      const observations = banks.map(binding => ({ ref: binding.ref, ...readDerived(system, binding.ref.slice(binding.ref.indexOf('#') + 1), () => []), at: at, clock: 'simulation' as const }))
+      const vessel = flowDrawing(section, observations, [], false).vessels.find(item => item.id === 'core')!
+      return { parts: vessel.parts, bars: vesselGeometry({ height: vessel.height, origin: { x: vessel.x, y: vessel.y }, drawing: vessel.drawing!, level: null, groups: [vessel.parts!] }).core!.bars }
+    }
+    // At power the banks stand out (228 steps withdrawn): no bar hangs in the core, each shows withdrawn above it.
+    const out = drawnAt(228)
+    expect(out.parts).toEqual(Array(8).fill(0))
+    expect(out.bars.every(bar => bar.inserted === 0 && bar.withdrawn! > 0)).toBe(true)
+    // Tripped (0 steps withdrawn): every bar hangs the core's full height, nothing withdrawn.
+    const tripped = drawnAt(0)
+    expect(tripped.parts).toEqual(Array(8).fill(1))
+    expect(tripped.bars.every(bar => bar.inserted! > 0 && bar.withdrawn === 0)).toBe(true)
+  })
+})
+

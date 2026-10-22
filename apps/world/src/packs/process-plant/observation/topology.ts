@@ -175,7 +175,7 @@ export const servedPlantTopology = (objectId: ObjectId, plant: CompiledProcessPl
   const parts = insertionPositions(plant)
   const bound: TopologyGraph = { ...topology, nodes: topology.nodes.map(node => {
     const state = roles.get(node.id)
-    // What it inserts (a core's rod banks), each part at the share of its travel it stands withdrawn.
+    // What it inserts (a core's rod banks), each part at the share of its range it stands inserted (1 fully in).
     const positions = (parts.get(node.id) ?? []).map(path => ({ role: 'position' as const, ref: `${objectId}#${path}` }))
     // Its state observable runs or conducts it in place of the signal it rests on: its word, and the command it does not follow.
     const kept = state === undefined ? node.bindings : node.bindings.filter(binding => binding.role !== state.role)

@@ -75,15 +75,29 @@ const itemStates = (plant: CompiledProcessPlant): ReadonlyMap<string, ItemState>
 export const itemStateRoles = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly role: 'running' | 'conducting'; readonly path: string }> =>
   new Map([...itemStates(plant)].map(([path, state]) => [state.element, { role: state.aspect.aspect === 'running' ? 'running' as const : 'conducting' as const, path }] as const))
 
-/** Each part an item inserts (a rod bank), as the share of its declared travel it stands withdrawn at: what a drawing positions. */
-const insertionParts = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly element: string; readonly source: VariablePath; readonly range: { readonly min: number; readonly max: number }; readonly label: string }> =>
+/**
+ * How far a part is in: its reading over its declared range, from the end it is out at to the end its insertion
+ * declares it fully in at (`insertedAt`; rods are in at zero steps withdrawn), 0 out to 1 fully in; null where it
+ * reads nothing.
+ */
+export const insertedShare = (value: unknown, range: { readonly min: number; readonly max: number }, insertedAt: 'min' | 'max'): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const share = insertedAt === 'min' ? (range.max - value) / (range.max - range.min) : (value - range.min) / (range.max - range.min)
+  return Math.min(1, Math.max(0, share))
+}
+
+/**
+ * Each part an item inserts (a rod bank), as the share of its declared range it stands inserted (insertedShare): what a
+ * drawing's `position` binding draws a part at, as the binding role declares it (a part's insertion, 1 fully in).
+ */
+const insertionParts = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly element: string; readonly source: VariablePath; readonly range: { readonly min: number; readonly max: number }; readonly insertedAt: 'min' | 'max'; readonly label: string }> =>
   new Map(plant.graph.components.flatMap(component => (component.semantics.insertion?.groups.flat() ?? []).map(part => {
-    const path = `${part.path}.travel`
-    if (plant.graph.signalBindingByPath.has(path as VariablePath)) throw new Error(`${path} is a signal of the Plant and the travel of a part it inserts`)
-    return [path, { element: String(component.id), source: part.path, range: part.range, label: `${plant.graph.signalBindingByPath.get(part.path)!.label} travel` }] as const
+    const path = `${part.path}.inserted`
+    if (plant.graph.signalBindingByPath.has(path as VariablePath)) throw new Error(`${path} is a signal of the Plant and the inserted share of a part it inserts`)
+    return [path, { element: String(component.id), source: part.path, range: part.range, insertedAt: component.semantics.insertion!.insertedAt, label: `${plant.graph.signalBindingByPath.get(part.path)!.label} · share inserted` }] as const
   })))
 
-/** The positions a drawing draws an element's parts at, by element: its parts' travel paths. */
+/** The positions a drawing draws an element's parts at, by element: its parts' inserted shares. */
 export const insertionPositions = (plant: CompiledProcessPlant): ReadonlyMap<string, ReadonlyArray<string>> => {
   const byElement = new Map<string, string[]>()
   for (const [path, part] of insertionParts(plant)) byElement.set(part.element, [...byElement.get(part.element) ?? [], path])
@@ -169,8 +183,7 @@ export const readDerived = (
   }
   const part = insertionParts(system.plant).get(path)
   if (part !== undefined) {
-    const steps = system.runtime.readVariableSnapshot(part.source).value
-    const value = typeof steps === 'number' && Number.isFinite(steps) ? (steps - part.range.min) / (part.range.max - part.range.min) : null
+    const value = insertedShare(system.runtime.readVariableSnapshot(part.source).value, part.range, part.insertedAt)
     return { value, quality: value === null ? 'bad' : 'good', priority: 'none' }
   }
   if (path === MODE) {

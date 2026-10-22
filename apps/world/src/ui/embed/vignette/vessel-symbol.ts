@@ -53,16 +53,6 @@ const HATCH_PITCH = 6
 /** A part not fully in shows this much of it above the core region (ISA-101 review of run 26c: 2 px ticks at power). */
 export const ROD_SHOWN = 12
 
-/**
- * How far a part is in: its reading over its range, from the end it is out
- * at to the end it is fully in at; null where it reads nothing.
- */
-export const insertedFraction = (value: number | null, range: { readonly min: number; readonly max: number }, insertedAt: 'min' | 'max'): number | null => {
-  if (value === null || !Number.isFinite(value)) return null
-  const fraction = insertedAt === 'min' ? (range.max - value) / (range.max - range.min) : (value - range.min) / (range.max - range.min)
-  return Math.min(1, Math.max(0, fraction))
-}
-
 export const vesselGeometry = (input: {
   /** The box's height; the vessel stands across its span of the box. */
   readonly height: number
@@ -71,7 +61,7 @@ export const vesselGeometry = (input: {
   readonly drawing: VesselDrawing
   /** The fill, in percent of the interior; null where it is not known. */
   readonly level: number | null
-  /** Each part's inserted fraction (insertedFraction), in its groups. */
+  /** Each part's inserted share, 0 out to 1 fully in, as its `position` binding reads (core/observation/topology.ts), in its groups. */
   readonly groups: ReadonlyArray<ReadonlyArray<number | null>>
 }): VesselGeometry => {
   // The vessel stands in its own span of the box, as wide as that span.
