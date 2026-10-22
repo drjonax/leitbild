@@ -8,7 +8,7 @@
 import { priorityLevels, type AlertState } from '../../../core/model/alerts.ts'
 import { leadsObject } from '../alerts/rows.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
-import type { Quantity } from '../../../core/observation/model.ts'
+import type { Observable, Quantity } from '../../../core/observation/model.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import { declarationOf, declaredRefs, visibleObject } from './declared.ts'
 import { overviewOf } from './topology.ts'
@@ -35,12 +35,30 @@ export const leadRefs = async (run: ComposeRun, objectId: ObjectId, count = 8): 
   return (await byRank(run, read.observations.map(observation => observation.ref))).slice(0, count)
 }
 
-/** The observables declared on an element, by rank; a device that is only a topology node, what its node binds. */
+/**
+ * Shown unless named: a demand (what is commanded) is no reading, nor, in an object that declares what its instruments
+ * measure, a value only its simulator computes. Where an object declares no instruments (a grid's flows), its computed
+ * values are what is known of it.
+ */
+const readable = (measured: boolean) => (observable: Observable): boolean => observable.basis !== 'command' && !(measured && observable.basis === 'model')
+
+/**
+ * An element's values (Q22): what its detail leads with, as its Pack declares (`lead`, other elements' values among
+ * them); then its own instrument readings and states by rank; then its other own values by rank. Never a demand or a
+ * simulator-only value (readable), which a request names to show. A device only its topology node stands for: what its
+ * node binds.
+ */
 export const elementRefs = async (run: ComposeRun, objectId: ObjectId, elementId: string, count = 8): Promise<ReadonlyArray<string>> => {
   const declaration = await declarationOf(run, objectId, [elementId])
-  const declared = declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? []
-  const refs = declared.length > 0 ? declared : (await topologyOf(run, objectId))?.nodes.find(node => node.id === elementId)?.bindings.map(binding => binding.ref) ?? []
-  return (await byRank(run, refs)).slice(0, count)
+  const element = declaration?.elements.find(entry => entry.id === elementId)
+  const own = declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? []
+  const refs = own.length > 0 ? own : (await topologyOf(run, objectId))?.nodes.find(node => node.id === elementId)?.bindings.map(binding => binding.ref) ?? []
+  const declared = await declaredRefs(run, [...element?.lead ?? [], ...refs])
+  const measured = (await declarationOf(run, objectId))?.observables.some(observable => observable.basis === 'instrument') === true
+  const shown = (ref: string): boolean => declared.has(ref) && readable(measured)(declared.get(ref)!.observable)
+  const ranked = await byRank(run, refs.filter(shown))
+  const reading = (ref: string): boolean => declared.get(ref)!.observable.basis === 'instrument' || declared.get(ref)!.observable.quantity === 'state'
+  return [...new Set([...(element?.lead ?? []).filter(shown), ...ranked.filter(reading), ...ranked.filter(ref => !reading(ref))])].slice(0, count)
 }
 
 /** An object's own states: declared on it, not on an element (an operating mode, safety-function statuses); a whole-object default heads with them. */
@@ -109,9 +127,13 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     ]
   }
   if (subject.kind === 'element') {
-    const refs = await elementRefs(run, subject.objectId, subject.elementId)
-    const trend = await recordedOf(run, refs, 4)
+    // Its values (elementRefs); where it is part of another element (a valve inside a vessel), its first four, then that
+    // element's (the vessel's pressure and level), eight at most.
+    const own = await elementRefs(run, subject.objectId, subject.elementId)
+    const parent = (await declarationOf(run, subject.objectId, [subject.elementId]))?.elements.find(element => element.id === subject.elementId)?.parent
     const graph = await topologyOf(run, subject.objectId)
+    const refs = parent === undefined ? own : [...new Set([...own.slice(0, 4), ...await elementRefs(run, subject.objectId, parent, 4), ...own.slice(4)])].slice(0, 8)
+    const trend = await recordedOf(run, refs, 4)
     return [
       ...(refs.length > 0 ? [{ kind: 'values', refs: [...refs] } as DraftView] : []),
       ...(trend.length > 0 ? [{ kind: 'trend', refs: [...trend], horizon: '10m' } as DraftView] : []),

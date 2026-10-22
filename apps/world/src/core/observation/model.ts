@@ -73,16 +73,34 @@ export const decimalsFor = (unit: string, value: number, quantity?: Quantity): n
 const unitSymbols: Readonly<Partial<Record<UnitCode, string>>> = { degC: '°C', 'degC/s': '°C/s', deg: '°', m3: 'm³', '1': '' }
 /** A unit code as a reader sees it: degC reads °C; a dimensionless 1 and a state's '' read nothing; any other unit is its own symbol. */
 export const unitSymbol = (unit: string): string => unitSymbols[unit as UnitCode] ?? unit
-/** A number at its decimals, never "-0.0". */
+const SUPERSCRIPTS: Readonly<Record<string, string>> = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' }
+/** A value read over decades: two significant digits and its power of ten, "4.4×10⁻⁸". */
+export const decadeParts = (value: number): { readonly text: string; readonly value: number; readonly decimals: number } => {
+  const [mantissa, exponent] = value.toExponential(1).split('e') as [string, string]
+  return { text: `${mantissa}×10${[...String(Number(exponent))].map(character => SUPERSCRIPTS[character] ?? character).join('')}`, value: Number(value.toExponential(1)), decimals: Math.max(0, 1 - Number(exponent)) }
+}
+/**
+ * A number at its decimals, never "-0.0". A value two decades or more below the step its decimals show, which they
+ * would write as 0 (an intermediate-range current, 4.4×10⁻⁸ A), is written as a reading over decades is (decadeParts);
+ * a true zero, and a value a step's tenth or so off zero (a deviation of -0.04 %), read 0.
+ */
 export const numberText = (value: number, unit: string, quantity?: Quantity): string => {
-  const text = value.toFixed(decimalsFor(unit, value, quantity))
+  const decimals = decimalsFor(unit, value, quantity)
+  if (value !== 0 && Math.abs(value) < 10 ** -decimals / 100) return decadeParts(value).text
+  const text = value.toFixed(decimals)
   return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
+}
+/** The number numberText writes, and the decimals it is written to (a reading over decades: its mantissa's, at its power of ten). */
+export const numberShown = (value: number, unit: string, quantity?: Quantity): { readonly value: number; readonly decimals: number } => {
+  const decimals = decimalsFor(unit, value, quantity)
+  if (value !== 0 && Math.abs(value) < 10 ** -decimals / 100) { const decade = decadeParts(value); return { value: decade.value, decimals: decade.decimals } }
+  return { value: Number(value.toFixed(decimals)), decimals }
 }
 /** Seconds as a countdown reads them (45 s, 4 min, 2 h), and metres as a distance (850 m, 12.3 km): the number and the unit it is shown in. */
 export const durationParts = (seconds: number): { readonly value: number; readonly unit: 's' | 'min' | 'h' } =>
   seconds < 90 ? { value: Math.round(seconds), unit: 's' } : seconds < 5_400 ? { value: Math.round(seconds / 60), unit: 'min' } : { value: Math.round(seconds / 3_600), unit: 'h' }
 export const distanceParts = (metres: number): { readonly value: number; readonly unit: 'm' | 'km' } =>
-  metres >= 1_000 ? { value: Number(numberText(metres / 1_000, 'km')), unit: 'km' } : { value: Number(numberText(metres, 'm')), unit: 'm' }
+  metres >= 1_000 ? { value: numberShown(metres / 1_000, 'km').value, unit: 'km' } : { value: numberShown(metres, 'm').value, unit: 'm' }
 
 export const thresholdSchema = z.object({
   id: z.string().min(1).max(128),

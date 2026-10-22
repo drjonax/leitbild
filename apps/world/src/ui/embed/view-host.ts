@@ -5,9 +5,11 @@
 // instead of zooming the browser page, and asks it to open a display after
 // it. A view that no window presents (a page of its own, or a display shown
 // inline in a chat answer) is shown at 1:1 and only says once that it
-// listens; inline in a chat answer whose page relays to the Workspace's
-// window (it says so with the contract's view-host message), it asks that
-// page to open a display there.
+// listens. Framed by a page that opens displays for it (it says so with the
+// contract's view-host message): a chat answer's page, which relays to the
+// Workspace's window, or World's procedure tag dialog, which opens the window
+// itself, it asks that page to open a display there (the contract's view-open
+// message).
 import { embeddedViewHostMessageSchema, type EmbeddedViewListing, type EmbeddedViewOpenMessage } from '@leitbild/contracts'
 import { parseDisplayFramePresentation, type DisplayFrameMap, type DisplayFrameMessage } from './display-frame-protocol.ts'
 import { observeDisplayExtent, type DisplayExtent } from './display-extent.ts'
@@ -19,7 +21,7 @@ export interface DisplayPresentation {
   readonly back?: string
 }
 
-/** Where a view opens a display it names: its window, or the Workspace's window through the chat page that relays. */
+/** Where a view opens a display it names: its window, or the Workspace's window through the page that frames it (a chat answer's, a procedure tag dialog's). */
 export type DisplayOpening = 'window' | 'relay'
 
 /** How a view is presented until its window says otherwise, and always when it has none. */
@@ -60,7 +62,7 @@ export const createViewHost = (ports: ViewHostPorts) => {
   const receive = (message: ReceivedMessage): void => {
     // Only the framing window, on this origin, presents the view.
     if (ports.parent === null || message.source !== ports.parent || message.origin !== ports.origin) return
-    // A chat page that relays to the Workspace's window says so once it is hosted.
+    // A page that opens displays for it (a chat answer's, a procedure tag dialog's) says so once it is hosted.
     if (embeddedViewHostMessageSchema.safeParse(message.data).success) {
       if (relayed) return
       relayed = true

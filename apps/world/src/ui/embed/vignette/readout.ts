@@ -124,14 +124,15 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
     text,
     value: !state && !unknown && quality !== 'not-applicable' && typeof value === 'number' ? Number(text) : null,
     decimals: typeof value === 'number' ? decimalsFor(input.unit, value, input.quantity) : 0,
-    unit: state || unknown ? '' : unitSymbol(input.unit),
+    // No number, no unit: a state, a reading not known, or one outside its declared validity ("—").
+    unit: state || unknown || quality === 'not-applicable' ? '' : unitSymbol(input.unit),
     tone,
     emphasis: input.priority === 'notice',
     doubtful: quality === 'uncertain' || quality === 'stale',
     fill: unknown ? 'unknown' : activeState(value, states) === true ? 'filled' : 'hollow',
-    chip: passed === undefined ? null : { word: orderWord(passed), text: `${orderWord(passed)} ${numberText(passed.value, input.unit, input.quantity)}${passed.consequence === undefined ? '' : ` · ${passed.consequence}`}`, tone },
+    chip: passed === undefined || quality === 'not-applicable' ? null : { word: orderWord(passed), text: `${orderWord(passed)} ${numberText(passed.value, input.unit, input.quantity)}${passed.consequence === undefined ? '' : ` · ${passed.consequence}`}`, tone },
     note,
-    bar: typeof value === 'number' && !unknown ? limitBar(value, input.thresholds, input.past) : null,
+    bar: typeof value === 'number' && !unknown && quality !== 'not-applicable' ? limitBar(value, input.thresholds, input.past) : null,
     title: [label, quality === 'good' ? '' : `quality: ${quality}`, input.why ?? ''].filter(part => part !== '').join(' · '),
   }
 }

@@ -14,6 +14,14 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(citationIssues('Pressure is 15.5 MPa ⟦k1⟧ and loading 112.6 % ⟦k2⟧.', items)).toEqual({ unknownKeys: [], contradictions: [] })
   })
 
+  test('a reading over decades is one number, at its mantissa\'s decimals and its power of ten (docs audit: 4.4×10⁻⁸ A)', () => {
+    const current: ReadonlyArray<CitedItem> = [{ key: 'k4', label: 'Unit 2 · Intermediate range current', reading: '4.4×10⁻⁸ A', numbers: [{ value: 4.4e-8, decimals: 9 }] }]
+    for (const written of ['4.4×10⁻⁸ A', '4.4 × 10⁻⁸ A', '4.4×10^-8 A', '4×10⁻⁸ A']) expect(flagged(`The current is ${written} ⟦k4⟧.`, current)).toEqual([])
+    expect(flagged('The current is 4.5×10⁻⁸ A ⟦k4⟧.', current)).toEqual(['4.5×10⁻⁸'])
+    expect(flagged('The current is 4.4×10⁻⁷ A ⟦k4⟧.', current)).toEqual(['4.4×10⁻⁷'])
+    expect(flagged('Strømmen er 4,4×10⁻⁸ A ⟦k4⟧.', current)).toEqual([])
+  })
+
   test('a number its key contradicts is named with what the line reads', () => {
     expect(citationIssues('Pressure is 15.7 MPa ⟦k1⟧.', items).contradictions).toEqual([
       { number: '15.7', keys: ['k1'], issue: '15.7 is cited with ⟦k1⟧, but k1 reads "15.50 MPa" (Unit 2 · Pressurizer pressure).' },

@@ -39,6 +39,12 @@ export interface NetworkDrawing {
   readonly texts: ReadonlyArray<{ readonly id: string; readonly x: number; readonly y: number; readonly width: number; readonly name: string; readonly reading: string | null; readonly below: boolean; readonly tone: AlertTone | null; readonly title: string }>
 }
 
+/**
+ * The scale a drawing is shown at: whole where its rows hold it, else the share of its height the composer left it
+ * ("drawing scaled to n % to fit"): its rows but the last over the grid rows its layout reaches into.
+ */
+export const drawingScale = (section: Pick<Topology, 'rows' | 'layout'>): number => Math.min(1, (section.rows - 1) / Math.max(1, Math.ceil(section.layout.height)))
+
 /** A name shortened to whole characters that fit its room, ending in "…". */
 export const fitName = (name: string, roomPx: number): string => {
   const most = Math.max(1, Math.floor(roomPx / CHAR_PX))
