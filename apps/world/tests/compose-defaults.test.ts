@@ -16,7 +16,7 @@ import { alertRows, priorityRank } from '../src/features/displays/alerts/rows.ts
 import type { AlertState } from '../src/core/model/alerts.ts'
 import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import { leadRefs } from '../src/features/displays/compose/defaults.ts'
-import type { VignetteSection } from '../src/features/displays/compose/model.ts'
+import type { VignetteSection, VignetteState } from '../src/features/displays/compose/model.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
@@ -242,6 +242,55 @@ describe('World defaults of every subject kind', () => {
       expect(kinds((await opened(fixtureRun, 'site:base')).view.sections)).toEqual(['slots', 'map'])
       expect(kinds((await opened(fixtureRun, 'unit:one#engine')).view.sections)).toEqual(['values', 'topology'])
       expect(kinds((await opened(fixtureRun, { of: { category: 'tasks', closed: false } })).view.sections)).toEqual(['entity', 'map'])
+    } finally { await fixture.close() }
+  })
+})
+
+// Q22: an element's values lead with what its Pack declares its detail leads with (another element's among them),
+// then its own instrument readings and states by rank, then the rest; a demand or a simulator-only value only where a
+// request names it. A device carries its host element's values after its own.
+describe('an element default leads with its declared lead values (Q22)', () => {
+  const ref = (signal: string) => `unit:one#${signal}`
+  const number = (signal: string, label: string, element: string, basis?: 'instrument' | 'command' | 'model') =>
+    ({ ref: ref(signal), label, quantity: 'speed', unit: 'm/s', valueType: 'number', thresholds: [], series: null, element, ...(basis === undefined ? {} : { basis }) })
+  const extra = [
+    number('demand', 'Engine speed demand', 'engine', 'command'), number('slip', 'Engine slip (model)', 'engine', 'model'),
+    number('vibration', 'Engine vibration', 'engine', 'instrument'), number('fuelFlow', 'Tank outflow', 'tank', 'instrument'),
+    { ref: ref('valve'), label: 'Engine valve', quantity: 'state', unit: '', valueType: 'text', thresholds: [], series: null, element: 'engine.valve' },
+  ]
+  const added = new Set(extra.map(entry => entry.ref))
+  const declaring = (base: ViewRun['port']): ViewRun['port'] => ({
+    ...base,
+    declarations: async (objectIds, elementIds) => (await base.declarations(objectIds, elementIds)).map(declaration => 'refused' in declaration || declaration.objectId !== 'unit:one' ? declaration : {
+      ...declaration,
+      elements: [...declaration.elements.map(element => element.id === 'engine' ? { ...element, lead: [ref('fuelFlow'), ref('demand'), ref('speed')] } : element),
+        { id: 'engine.valve', class: 'valve', label: 'Engine valve', parent: 'engine' }],
+      observables: [...declaration.observables, ...extra] as never,
+    }),
+    read: async request => {
+      if (!('refs' in request)) return base.read(request)
+      const known = request.refs.filter(entry => !added.has(entry))
+      const read = known.length === 0 ? { observations: [], unknown: [], refused: [] } : await base.read({ refs: known })
+      return { ...read, observations: [...read.observations, ...request.refs.filter(entry => added.has(entry)).map(entry => ({ ref: entry, at: read.observations[0]?.at ?? '2026-01-01T08:00:00.000Z', clock: 'simulation', value: entry === ref('valve') ? 'open' : 1, quality: 'good', priority: 'none' }) as never)] }
+    },
+  })
+  const valuesOf = (state: VignetteState) => { const view = state.views.find(entry => entry.kind === 'values'); return view?.kind === 'values' ? view.refs : undefined }
+
+  test('the declared lead first (another element\'s value among them), then readings; no demand or model value; a device after its own, its host\'s', async () => {
+    const fixture = await fixtureComposeRun()
+    try {
+      const run = await fixture.runOf()
+      const declared = await fixture.runOf({ port: declaring(run.port) })
+      const engine = await composeDefault(declared, 'unit:one#engine')
+      if (!engine.ok) throw new Error(JSON.stringify(engine.issues))
+      expect(valuesOf(engine.state)).toEqual([ref('fuelFlow'), ref('speed'), ref('vibration')])
+      const valve = await composeDefault(declared, 'unit:one#engine.valve')
+      if (!valve.ok) throw new Error(JSON.stringify(valve.issues))
+      expect(valuesOf(valve.state)).toEqual([ref('valve'), ref('fuelFlow'), ref('speed'), ref('vibration')])
+      // A request that names the demand shows it.
+      const named = await composeVignette(declared, displaySpecSchema.parse({ title: 'Demand', question: 'What is the engine asked for?', subjects: [ref('demand')], views: [{ kind: 'values', signals: [ref('demand'), ref('slip')] }] }))
+      if (!named.ok) throw new Error(JSON.stringify(named.issues))
+      expect(valuesOf(named.state)).toEqual([ref('demand'), ref('slip')])
     } finally { await fixture.close() }
   })
 })

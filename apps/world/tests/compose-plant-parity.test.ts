@@ -12,7 +12,7 @@ import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { composeDefault } from '../src/features/displays/compose/compose.ts'
+import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import { FLOW_ROOM, overviewOf, scopeWithin, topologyOf } from '../src/features/displays/compose/topology.ts'
 import { resolveSubject } from '../src/features/displays/compose/resolve.ts'
 import { visibleObject } from '../src/features/displays/compose/declared.ts'
@@ -192,10 +192,70 @@ describe('P9: an equipment default carries what the detail display carries', () 
     expect(await resolveSubject(run, `${plantId}#PORV-456A`, 'subject')).toEqual({ kind: 'observable', objectId: plantId, ref: `${plantId}#pressurizer.reliefValvePositionFraction` })
     const { state, view } = await opened(`${plantId}#PORV`)
     expect(view.title).toBe(`${visibleObject(run, plantId)!.label} · PORV`)
-    // Its readings are what its node binds (it declares no observables of its own): its position and its flow.
+    // Its readings (Q22): its measured position first, never its demand or a value only the simulator computes.
     const readings = state.views.find(entry => entry.kind === 'values')
-    expect(readings?.kind === 'values' && readings.refs).toContain(`${plantId}#pressurizer.reliefValveEffectivePositionFraction`)
+    if (readings?.kind !== 'values') throw new Error('no values')
+    expect(readings.refs[0]).toBe(`${plantId}#pressurizer.reliefValveEffectivePositionFraction`)
+    expect(readings.refs).not.toContain(`${plantId}#pressurizer.reliefValvePositionFraction`)
     const drawing = view.sections.find(section => section.kind === 'topology')
     expect(drawing?.kind === 'topology' && drawing.nodes.map(node => node.id)).toContain('pressurizer.reliefValve')
   })
+
+  // E2 porv-open: once the Plant declares the PORV's host (parent: the pressurizer, p2-plant), its default carries the
+  // pressurizer's lead values after its own, its pressure and level among them.
+  test.todo('the PORV carries the pressurizer\'s pressure and level after its own readings', async () => {
+    const { state } = await opened(`${plantId}#PORV`)
+    const readings = state.views.find(entry => entry.kind === 'values')
+    expect(readings?.kind === 'values' && readings.refs).toEqual(expect.arrayContaining([`${plantId}#pressurizer.pressureMPa`, `${plantId}#pressurizer.levelPercent`]))
+  })
+})
+
+// Q22: an equipment default leads with today's detail key values (equipmentKeyValues, recorded at power on four-loop
+// Halden before the swap), in order, once the Plant declares them as each element's lead (p2-plant, per mode).
+describe('Q22: equipment defaults lead with today\'s detail key values', () => {
+  const recorded: Readonly<Record<string, ReadonlyArray<string>>> = {
+    sgA: ['sgA.levelPercent', 'sgA.wideRangeLevelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgA.feedwaterFlowKgPerS', 'aux-feedwater-valve-a-to-sg-a.flowKgPerS', 'feedwater-control-valve-a-to-sg-a.flowKgPerS'],
+    pressurizer: ['pressurizer.pressureMPa', 'pressurizer.reliefValveFlowing', 'pressurizer-relief-to-tank.temperatureC', 'pressurizer.safetyValvesOpen', 'pressurizer.levelDeviationPercent', 'pressurizer.levelPercent', 'pressurizer.levelProgramPercent', 'pressurizer.backupHeaterDemandMw'],
+    rcpA: ['rcpA.runningState', 'rcpA.loopFlowKgPerS'],
+  }
+  test.todo('SG A, the pressurizer and RCP A at power', async () => {
+    const atPower = await registry.create({ scenarioId: 'halden-power-complex' })
+    await atPower.setClock({ paused: true })
+    await atPower.runMaximumPace(new Date(Date.parse(atPower.snapshot().clock!.currentTime) + 30_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+    const powerRun = await displayRunOf(registry, atPower, person, new Set())
+    for (const [element, values] of Object.entries(recorded)) {
+      const outcome = await composeDefault(powerRun, `${plantId}#${element}`)
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+      const readings = outcome.state.views.find(entry => entry.kind === 'values')
+      expect(readings?.kind === 'values' && readings.refs.slice(0, values.length), element).toEqual(values.map(path => `${plantId}#${path}`))
+    }
+  })
+})
+
+// E2 (swap candidate 10cfda49f): every topology the Assistant asked for on the new side, as it asked (show-feed-lineup,
+// feed-path-b, op-open-msiv-at-power). A request whose drawing does not verify at its reach draws nearer, and says so;
+// a line named by its observable stands for its ends.
+describe('E2: the topologies the Assistant asked for draw', () => {
+  const asked = (subjects: ReadonlyArray<string>, topology: Record<string, unknown>) => ({ title: 'E2', question: 'E2', subjects: subjects.map(name => `${plantId}#${name}`), views: [{ kind: 'topology', ...Object.fromEntries(Object.entries(topology).map(([key, value]) => [key, Array.isArray(value) ? value.map(name => `${plantId}#${name}`) : value])) }] })
+  const cases: ReadonlyArray<readonly [string, ReturnType<typeof asked>, string?]> = [
+    ['feed-path-b k1, around the FCV and SG B two links out', asked(['feedwaterControlValveB.effectivePositionFraction', 'sgB.levelPercent'], { around: ['feedwaterControlValveB.effectivePositionFraction', 'sgB.levelPercent'], reach: 2 }), 'drawn 1 link out to fit'],
+    ['feed-path-b k1, from the FCV to SG B', asked(['feedwaterControlValveB.effectivePositionFraction', 'sgB.levelPercent'], { from: ['feedwaterControlValveB.effectivePositionFraction'], to: ['sgB.levelPercent'] })],
+    ['op-open-msiv-at-power, around MSIV A by its tag', asked(['MSIV-A'], { around: ['MSIV-A'], reach: 1 })],
+    ['show-feed-lineup k1, from the feedwater tank to every SG', asked(['feedwaterTank', 'sgA', 'sgB', 'sgC', 'sgD'], { from: ['feedwaterTank'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 4 })],
+    ['feed-path-b k2, around a line by its flow and SG B', asked(['sgB.feedwaterFlowKgPerS', 'feedwater-control-valve-b-to-sg-b.flowKgPerS'], { around: ['feedwater-control-valve-b-to-sg-b.flowKgPerS', 'sgB.feedwaterFlowKgPerS'], reach: 3 }), 'drawn 1 link out to fit'],
+    ['feed-path-b k2, around SG B three links out', asked(['sgB.feedwaterFlowKgPerS', 'sgB.levelPercent'], { around: ['sgB'], reach: 3 }), 'drawn 1 link out to fit'],
+    // Each AFW valve's line into its SG takes a fourth bend where three draw nothing (render, 69a7dce68).
+    ['show-feed-lineup k2, from MFW A and the AFW header to every SG', asked(['mainFeedwaterPumpA.runningState', 'auxFeedwaterHeader.outletFlowKgPerS'], { from: ['mainFeedwaterPumpA', 'auxFeedwaterHeader'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 3 })],
+  ]
+  for (const [name, spec, adjustment] of cases) {
+    test(name, async () => {
+      const outcome = await composeVignette(run, spec as never)
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+      const drawing = (await compileVignette(run, outcome.state)).sections.find(section => section.kind === 'topology')
+      if (drawing?.kind !== 'topology') throw new Error('no drawing')
+      expect(drawing.layout.width <= FLOW_ROOM.columns && drawing.layout.height <= FLOW_ROOM.rows).toBe(true)
+      expect(overlaps(drawing.layout)).toEqual([])
+      if (adjustment !== undefined) expect(outcome.card.adjusted.map(entry => entry.text)).toContain(adjustment)
+    })
+  }
 })

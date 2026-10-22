@@ -53,15 +53,25 @@ const signalRefs = async (run: ComposeRun, names: ReadonlyArray<string>, path: s
   return [...new Set(refs)]
 }
 
-const nodeFor = async (run: ComposeRun, graph: NonNullable<Awaited<ReturnType<typeof topologyOf>>>, name: string, path: string): Promise<string | ComposeIssue> => {
+/**
+ * The nodes a name stands for in a request: a node by id, element or label; else what it resolves to, a node's element
+ * or a value a node binds; else a line (an edge by its element or a value it binds), which a route from starts where
+ * it begins, one to ends where it ends, and around takes both ends of.
+ */
+const nodesFor = async (run: ComposeRun, graph: NonNullable<Awaited<ReturnType<typeof topologyOf>>>, name: string, path: string, role: 'from' | 'to' | 'around'): Promise<ReadonlyArray<string> | ComposeIssue> => {
   const local = name.startsWith(`${graph.objectId}#`) ? name.slice(graph.objectId.length + 1) : name
   const node = graph.nodes.find(entry => entry.id === local || entry.element === local || same(entry.label, local) || (entry.shortLabel !== undefined && same(entry.shortLabel, local)))
-  if (node !== undefined) return node.id
+  if (node !== undefined) return [node.id]
   const subject = await resolveSubject(run, name, path, [graph.objectId])
   if (isIssue(subject)) return subject
-  const element = subject.kind === 'element' ? subject.elementId : subject.kind === 'observable' ? (await declaredRefs(run, [subject.ref])).get(subject.ref)?.element?.id : undefined
-  const found = graph.nodes.find(entry => (entry.element ?? entry.id) === element)
-  return found?.id ?? { path, code: 'unknown_name', message: `"${name}" is not drawn in ${graph.objectId}'s topology` }
+  const ref = subject.kind === 'observable' ? subject.ref : undefined
+  const element = subject.kind === 'element' ? subject.elementId : ref !== undefined ? (await declaredRefs(run, [ref])).get(ref)?.element?.id : undefined
+  const binds = (bindings: ReadonlyArray<{ readonly ref: string }>): boolean => ref !== undefined && bindings.some(binding => binding.ref === ref)
+  const found = graph.nodes.find(entry => (entry.element ?? entry.id) === element) ?? graph.nodes.find(entry => binds(entry.bindings))
+  if (found !== undefined) return [found.id]
+  const line = graph.edges.find(entry => entry.id === element) ?? graph.edges.find(entry => binds(entry.bindings))
+  if (line !== undefined) return role === 'from' ? [line.from.node] : role === 'to' ? [line.to.node] : [line.from.node, line.to.node]
+  return { path, code: 'unknown_name', message: `"${name}" is not drawn in ${graph.objectId}'s topology` }
 }
 
 const topologyView = async (run: ComposeRun, view: Extract<View, { kind: 'topology' }>, path: string, subjects: ReadonlyArray<Subject>): Promise<DraftView | ComposeIssue> => {
@@ -69,15 +79,15 @@ const topologyView = async (run: ComposeRun, view: Extract<View, { kind: 'topolo
     if (subject.kind === 'connection' || subject.kind === 'collection') continue
     const graph = await topologyOf(run, subject.objectId)
     if (graph === null) continue
-    const nodes = async (names: ReadonlyArray<string> | undefined, key: string): Promise<ReadonlyArray<string> | undefined | ComposeIssue> => {
+    const nodes = async (names: ReadonlyArray<string> | undefined, key: 'from' | 'to' | 'around'): Promise<ReadonlyArray<string> | undefined | ComposeIssue> => {
       if (names === undefined) return undefined
       const ids: string[] = []
       for (const [index, name] of names.entries()) {
-        const id = await nodeFor(run, graph, name, `${path}.${key}.${index}`)
-        if (isIssue(id)) return id
-        ids.push(id)
+        const found = await nodesFor(run, graph, name, `${path}.${key}.${index}`, key)
+        if (isIssue(found)) return found
+        ids.push(...found)
       }
-      return ids
+      return [...new Set(ids)]
     }
     const pick = (names: ReadonlyArray<string> | undefined, key: 'media' | 'groups'): ReadonlyArray<string> | undefined | ComposeIssue => {
       if (names === undefined) return undefined
@@ -261,6 +271,18 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       let request = view.request
       let scoped = graph === null ? null : scopeWithin(graph, request)
       let drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
+      // A one-ended or around request whose drawing does not verify draws nearer, a link less at a time, as named otherwise.
+      if (graph !== null && drawing === null && scoped?.ok === true && request.overview !== true && !(request.from !== undefined && request.to !== undefined)) {
+        for (let reach = (scoped.reach ?? request.reach ?? TOPOLOGY_REACH) - 1; reach >= 1; reach -= 1) {
+          const asked = { ...request, reach }
+          const narrowed = scopeWithin(graph, asked)
+          const drawn = narrowed.ok ? await drawingOf(narrowed.scoped) : null
+          if (!narrowed.ok || drawn === null) continue
+          countAdjustment(adjusted, { kind: 'scope', text: `drawn ${reach} ${reach === 1 ? 'link' : 'links'} out to fit` })
+          ;[request, scoped, drawing] = [asked, { ok: true, scoped: narrowed.scoped }, drawn]
+          break
+        }
+      }
       // Around one item, with no medium named: as today's detail does, every service the item carries out to the
       // furthest reach that fits the ceilings (a default tries this first); else one service at a time, in the order
       // of the item's own ports, the others stopped at it, and the card names them.
