@@ -8,7 +8,8 @@
 // the card's own labels and language words name a part, never a pack's words.
 //
 // A number answers to the nearer key group before or after it within its unit
-// (a table cell, else a clause). It holds when it is one of a cited item's
+// (a table cell, else a clause), one key per number: a group of n keys answers
+// from behind only to the n numbers nearest before it. It holds when it is one of a cited item's
 // numbers at the decimals it is written with, or a declared limit after a
 // limit word, or a difference of two values its own keys cite in its unit. Every answer
 // is read both in English ("2,291.5") and Norwegian ("2 291,5"): only a number
@@ -117,12 +118,29 @@ export const readingFlags = (answer: string, items: ReadonlyMap<string, CitedIte
     entries.push({ ends: range ? [found, next!] : [found], start: found.index, end: last.index + last.text.length, unit: unitOf(found.index) })
     if (range) index += 1
   }
-  const groups = [...answer.matchAll(GROUP)].map(match => ({ index: match.index!, end: match.index! + match[0].length, unit: unitOf(match.index!), keys: [...match[0].matchAll(KEY)].map(key => `k${key[1]}`).filter(key => items.has(key)) }))
-  // In reading order: the first group after the entry, or the last group before it when no other number stands between
-  // and no earlier number answers to it from behind; the nearer in characters wins, a tie going to the group after.
+  const groups = [...answer.matchAll(GROUP)].map(match => {
+    const written = [...match[0].matchAll(KEY)].map(key => `k${key[1]}`)
+    return { index: match.index!, end: match.index! + match[0].length, unit: unitOf(match.index!), size: written.length, keys: written.filter(key => items.has(key)) }
+  })
+  // One key per number: a group of n keys answers from behind only to the n numbers nearest before it in its unit, so a
+  // number written without a key earlier in the clause ("from 15.48 MPa … to 14.33 MPa ⟦k1⟧") is cited by none.
+  const nearest = new Map(groups.map(group => {
+    const covered = new Set<typeof entries[number]>()
+    let room = group.size
+    for (const entry of entries.filter(other => other.unit === group.unit && other.end <= group.index).reverse()) {
+      if (room <= 0) break
+      covered.add(entry)
+      room -= entry.ends.length
+    }
+    return [group, covered] as const
+  }))
+  // In reading order: the first group after the entry when it is among that group's nearest, or the last group before
+  // it when no other number stands between and no earlier number answers to it from behind; the nearer in characters
+  // wins, a tie going to the group after.
   const takenFromBehind = new Set<number>()
   const answered = entries.map(entry => {
-    const after = groups.find(group => group.unit === entry.unit && group.index >= entry.end)
+    const first = groups.find(group => group.unit === entry.unit && group.index >= entry.end)
+    const after = first !== undefined && nearest.get(first)!.has(entry) ? first : undefined
     const lastBefore = groups.filter(group => group.unit === entry.unit && group.end <= entry.start).at(-1)
     const before = lastBefore !== undefined && !takenFromBehind.has(lastBefore.index)
       && !entries.some(other => other !== entry && other.unit === entry.unit && other.start >= lastBefore.end && other.end <= entry.start) ? lastBefore : undefined
