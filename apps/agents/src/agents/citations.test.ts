@@ -42,10 +42,35 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('Pressure and loading span 15.5–120 ⟦k1⟧ ⟦k2⟧.')).toEqual(['15.5–120'])
     expect(flagged('Loading is 112.6 %, above its 100 % rating ⟦k2⟧.')).toEqual([])
     expect(flagged('Loading is 112.6 %, then 100 % ⟦k2⟧.')).toEqual(['100'])
-    expect(flagged('Loading is 112.6 %, or 12.6 percentage points above 100 % ⟦k2⟧.')).toEqual([])
-    expect(flagged('Loading is 112.6 %, or 15.6 percentage points above 100 % ⟦k2⟧.')).toEqual(['15.6'])
+    expect(flagged('Loading is 112.6 % ⟦k2⟧, above its 100 % ⟦k2⟧ rating, or 12.6 percentage points ⟦k2⟧ over.')).toEqual([])
+    expect(flagged('Loading is 112.6 % ⟦k2⟧, above its 100 % ⟦k2⟧ rating, or 15.6 percentage points ⟦k2⟧ over.')).toEqual(['15.6'])
     // Without both values in its clause a difference is unchecked, never flagged.
     expect(flagged('Loading is 12.6 points above full loading ⟦k2⟧.')).toEqual([])
+  })
+
+  test('one key per number: a group of n keys answers from behind only to its n nearest numbers (E2)', () => {
+    const plant: ReadonlyArray<CitedItem> = [
+      { key: 'k1', label: 'Halden Unit 2 · Pressurizer pressure', reading: '14.33 MPa · warning', numbers: [{ value: 14.33, decimals: 2 }] },
+      { key: 'k2', label: 'Halden Unit 2 · RCS subcooling margin · RV', reading: '13.8 °C · warning', numbers: [{ value: 13.8, decimals: 1 }] },
+      { key: 'k3', label: 'Halden Unit 2 · Process header outlet flow · AFW header', reading: '113 kg/s', numbers: [{ value: 113, decimals: 0 }] },
+      { key: 'k11', label: 'Halden Unit 2 · SI flow', reading: '0 kg/s', numbers: [{ value: 0, decimals: 0 }] },
+      { key: 'k12', label: 'Halden Unit 2 · Pressurizer pressure', reading: '13.60 MPa', numbers: [{ value: 13.6, decimals: 2 }] },
+      { key: 'k13', label: 'Halden Unit 2 · Containment pressure', reading: '0.10 MPa', numbers: [{ value: 0.1, decimals: 2 }] },
+    ]
+    // E2's porv-open drafts: a historian sample written without a key, earlier than the keyed current value.
+    expect(flagged('**Yes, the recorded condition worsened:** sampled pressurizer pressure fell from 15.48 MPa at 10:00:01 to 14.33 MPa ⟦k1⟧ at 10:02:00; subcooling margin is also low at 13.8 °C ⟦k2⟧.', plant)).toEqual([])
+    expect(flagged('Unit 2’s pressure drop is **still worsening in the recorded interval**: pressurizer pressure fell from 15.48 MPa at 10:00:01 to 14.33 MPa ⟦k1⟧ at 10:02:00, the lowest retained sample.', plant)).toEqual([])
+    // E2's e0-immediate draft: a model setpoint written without a key, before another value's key.
+    expect(flagged('SI flow is 0 kg/s ⟦k11⟧; pressurizer pressure is 13.60 MPa ⟦k12⟧ versus the model’s 12.7 MPa low-pressure SI setpoint, and containment pressure is 0.10 MPa ⟦k13⟧ versus its 0.128 MPa Hi-1 setpoint.', plant)).toEqual([])
+    // E2's op-stop-afw-pump draft: the key stands after a phrase, so the nearest number before it answers to it.
+    expect(flagged('Stopping it would remove about 28 kg/s of flow from the condensate storage tank to the AFW header—roughly a quarter of the current AFW flow ⟦k3⟧.', plant)).toEqual(['28'])
+    // A contradiction is still caught: an earlier number with its own key, and each number of a keyed list.
+    expect(flagged('Pressure fell from 15.48 MPa ⟦k1⟧ at 10:00:01 to 14.33 MPa ⟦k1⟧ at 10:02:00.', plant)).toEqual(['15.48'])
+    expect(flagged('Loading reads 91.3 %, 92.2 % and 95.0 % ⟦k1⟧ ⟦k2⟧ ⟦k3⟧.', [
+      { key: 'k1', label: 'Line A · loading', reading: '91.3 %', numbers: [{ value: 91.3, decimals: 1 }] },
+      { key: 'k2', label: 'Line B · loading', reading: '92.2 %', numbers: [{ value: 92.2, decimals: 1 }] },
+      { key: 'k3', label: 'Line C · loading', reading: '93.2 %', numbers: [{ value: 93.2, decimals: 1 }] },
+    ])).toEqual(['95.0'])
   })
 
   test('a difference is checked only against two cited values of its own keys, never another item\'s number (E1)', () => {
@@ -58,8 +83,8 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('The closest readings to a branch-loading limit are **Sylling–Tegneby (1)** at 130.9% ⟦k7⟧—already 30.9 percentage points ⟦k7⟧ over—and **Hasle–Rød (1)** at 91.3% ⟦k8⟧, 8.7 points ⟦k8⟧ below.', lines)).toEqual([])
     expect(flagged('Hasle–Rød (1) is at 91.3% ⟦k8⟧, 8.7 points ⟦k8⟧ below.', lines)).toEqual([])
     // Two cited values of the same key still check it: right holds, wrong is flagged.
-    expect(flagged('Loading is 130.9 %, or 30.9 percentage points above 100 % ⟦k7⟧.', lines)).toEqual([])
-    expect(flagged('Loading is 130.9 %, or 39.6 percentage points above 100 % ⟦k7⟧.', lines)).toEqual(['39.6'])
+    expect(flagged('Loading is 130.9 % ⟦k7⟧, above its 100 % ⟦k7⟧ limit, or 30.9 percentage points ⟦k7⟧ over.', lines)).toEqual([])
+    expect(flagged('Loading is 130.9 % ⟦k7⟧, above its 100 % ⟦k7⟧ limit, or 39.6 percentage points ⟦k7⟧ over.', lines)).toEqual(['39.6'])
     // A difference whose keys cite one value is unchecked, even beside another line's value.
     expect(flagged('Sylling–Tegneby (1) at 130.9 % ⟦k7⟧ is 39.6 points ⟦k7⟧ above Hasle–Rød (1) at 91.3 % ⟦k8⟧.', lines)).toEqual([])
   })
@@ -68,16 +93,17 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('Units 1 and 2 read 15.50 MPa ⟦k1⟧.')).toEqual([])
     expect(flagged('Unit 2 ⟦k1⟧ reads 15.50 MPa ⟦k1⟧.')).toEqual([])
     expect(flagged('Display 2 shows loading at 112.6 % ⟦k2⟧.')).toEqual([])
-    // "Loop" is a pack word: 3 is read as a value and flagged against k1 ...
-    expect(flagged('Loop 3 pressure is 15.50 MPa ⟦k1⟧.')).toEqual(['3'])
-    // ... unless the card's label names it, with the word after it or in parentheses as written.
+    // "Loop" is a pack word: 3 with a key right after it is read as a value and flagged against k1 ...
+    expect(flagged('Loop 3 ⟦k1⟧ pressure is 15.50 MPa ⟦k1⟧.')).toEqual(['3'])
+    // ... unless the card's label names it as written.
     const loop: ReadonlyArray<CitedItem> = [{ ...items[0]!, label: 'Loop 3 pressure' }]
-    expect(flagged('Loop 3 pressure is 15.50 MPa ⟦k1⟧.', loop)).toEqual([])
+    expect(flagged('Loop 3 ⟦k1⟧ pressure is 15.50 MPa ⟦k1⟧.', loop)).toEqual([])
     const line: ReadonlyArray<CitedItem> = [{ ...items[1]!, label: 'Ertsmyra trafostasjon 420 kV · Sylling – Tegneby (1)' }]
     expect(flagged('Ertsmyra 420 kV: Sylling–Tegneby (1) is at 112.6 % ⟦k2⟧.', line)).toEqual([])
-    // Known risk (E0): a name written otherwise than its label ("circuit 1" for "(1)") and cited to an item with
-    // numbers is flagged; the correction then asks for the value as the line reads it.
-    expect(flagged('Sylling–Tegneby circuit 1 is at 112.6 % ⟦k2⟧.', line)).toEqual(['1'])
+    // Known risk (E0): a name written otherwise than its label ("circuit 1" for "(1)") is flagged when a key stands right
+    // after it; written before its value's key, one key per number leaves it uncited.
+    expect(flagged('Sylling–Tegneby circuit 1 ⟦k2⟧ is at 112.6 % ⟦k2⟧.', line)).toEqual(['1'])
+    expect(flagged('Sylling–Tegneby circuit 1 is at 112.6 % ⟦k2⟧.', line)).toEqual([])
   })
 
   test('a number is a name when the whole token it forms with the word before it occurs in a card label', () => {
@@ -88,9 +114,10 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     // (2) The word alone in a label is never enough: "Pump A" does not name 75, so 75 against 72 is flagged.
     const pump: ReadonlyArray<CitedItem> = [{ key: 'k2', label: 'Pump A · speed', reading: '72 %', numbers: [{ value: 72, decimals: 0 }] }]
     expect(flagged('Pump A 75 % ⟦k2⟧.', pump)).toEqual(['75'])
-    // A token matches whole: "A-21" is not named by a label "A-210" or "ZA-21".
-    expect(flagged('Unit A-21 runs at 0.0 m/s ⟦k3⟧.', speed('Unit A-210 · speed'))).toEqual(['21'])
-    expect(flagged('Unit A-21 runs at 0.0 m/s ⟦k3⟧.', speed('Unit ZA-21 · speed'))).toEqual(['21'])
+    // A token matches whole: "A-21" right before a key is not named by a label "A-210" or "ZA-21".
+    expect(flagged('Unit A-21 ⟦k3⟧ runs at 0.0 m/s ⟦k3⟧.', speed('Unit A-21 · speed'))).toEqual([])
+    expect(flagged('Unit A-21 ⟦k3⟧ runs at 0.0 m/s ⟦k3⟧.', speed('Unit A-210 · speed'))).toEqual(['21'])
+    expect(flagged('Unit A-21 ⟦k3⟧ runs at 0.0 m/s ⟦k3⟧.', speed('Unit ZA-21 · speed'))).toEqual(['21'])
     // (3) "Ambulance 21" names 21 through its label.
     const distance: ReadonlyArray<CitedItem> = [{ key: 'k5', label: 'Ambulance 21 · Distance', reading: '4.2 km', numbers: [{ value: 4.2, decimals: 1 }] }]
     expect(flagged('Ambulance 21 is 4.2 km away ⟦k5⟧.', distance)).toEqual([])
@@ -107,7 +134,7 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('Trykket er 17,2 MPa ⟦k1⟧.')).toEqual(['17,2'])
     // One reading alone flags what the other reads as a value: English splits "2 291", Norwegian reads "2,291" as 2.291.
     const byKey = new Map(reserve.map(item => [item.key, item]))
-    expect(readingFlags('Reservemarginen er 2 291 MW ⟦k4⟧.', byKey, 'en').map(flag => flag.number)).toEqual(['2', '291'])
+    expect(readingFlags('Reservemarginen er 2 291 MW ⟦k4⟧.', byKey, 'en').map(flag => flag.number)).toEqual(['291'])
     expect(readingFlags('A reserve margin of 2,291 MW ⟦k4⟧.', byKey, 'nb').map(flag => flag.number)).toEqual(['2,291'])
   })
 })

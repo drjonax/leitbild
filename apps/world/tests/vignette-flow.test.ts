@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Observation } from '../src/core/observation/model.ts'
 import type { TopologyGraph } from '../src/core/observation/topology.ts'
 import type { VignetteSection } from '../src/features/displays/compose/model.ts'
-import { overviewOf } from '../src/features/displays/compose/topology.ts'
+import { FLOW_ROOM, overviewOf } from '../src/features/displays/compose/topology.ts'
 import { flowLayout } from '../src/features/displays/topology/flow-sizing.ts'
 import { groupName, type TopologyLayout } from '../src/features/displays/topology/layout.ts'
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
@@ -21,7 +21,7 @@ guardPlantTests()
 // four within one), the drawn ids of T01's reference mimics out of the
 // topology, and what the renderer draws from the layout and the sample.
 
-const ROOM = { columns: 66, rows: 36 }
+const ROOM = FLOW_ROOM
 const overlapping = (layout: TopologyLayout): ReadonlyArray<string> => {
   const texts = layout.nodes.flatMap(node => (node.text === undefined ? [] : [{ id: `${node.id}:text`, ...node.text }]))
   return overlaps({ ...layout, nodes: [...layout.nodes, ...texts].map(box => ({ ...box, ports: {} })) })
@@ -68,6 +68,14 @@ describe('flow layout', () => {
       expect(drawn.layout.width).toBeLessThanOrEqual(ROOM.columns)
       expect(drawn.layout.height).toBeLessThanOrEqual(ROOM.rows)
     }
+  })
+
+  test('four loops: the feed line-up from MFW A and the AFW header to every steam generator draws (E2 show-feed-lineup), taking a fourth bend only where three draw nothing', () => {
+    const drawn = layoutOf({ from: ['mainFeedwaterPumpA', 'auxFeedwaterHeader'], to: ['sgA', 'sgB', 'sgC', 'sgD'] })
+    expect(drawn).not.toBeNull()
+    expect(drawn!.layout.crossings).toBeLessThanOrEqual(12)
+    expect(overlapping(drawn!.layout)).toEqual([])
+    expect(drawnIds(drawn!.layout)).toEqual(expect.arrayContaining(['sgA', 'sgB', 'sgC', 'sgD', 'mainFeedwaterPumpA', 'auxFeedwaterHeader']))
   })
 
   test('four loops: around a steam generator and the pressurizer, each within one lane, at most four crossings and no overlap', () => {
