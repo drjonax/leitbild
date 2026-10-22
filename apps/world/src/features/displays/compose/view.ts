@@ -8,7 +8,7 @@ import { refObjectId } from '../../../core/model/alerts.ts'
 import type { OperationalObject } from '../../../core/model/index.ts'
 import { routeDistanceMeters } from '../../../core/model/route.ts'
 import type { Observation } from '../../../core/observation/model.ts'
-import { alertRows, priorityRank, worstFirst, type AlertRow } from '../alerts/rows.ts'
+import { alertRows, leadsObject, priorityRank, worstFirst, type AlertRow } from '../alerts/rows.ts'
 import { declaredRefs, valueOf, visibleObject } from './declared.ts'
 import {
   ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type ResolvedView, type SeriesPoint, type SlotDeclaration, type VignetteSample,
@@ -139,7 +139,7 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
     else if (view.kind === 'trend') sections.push({ kind: 'trend', rows: view.rows, horizonMs: horizonMs(view.horizon), strips: stripsOf(values(view.refs).filter(value => value.series !== null)).slice(0, 4) })
     else if (view.kind === 'alerts') {
       const objectIds = view.objectIds === 'run' ? 'run' : view.objectIds.filter(id => visibleObject(run, id) !== undefined)
-      if (objectIds.length > 0) sections.push({ kind: 'alerts', rows: view.rows, objectIds, ...(view.elements === undefined ? {} : { elements: view.elements }), ...(view.refs === undefined ? {} : { refs: view.refs }) })
+      if (objectIds.length > 0) sections.push({ kind: 'alerts', rows: view.rows, objectIds, ...(view.elements === undefined ? {} : { elements: view.elements }), ...(view.refs === undefined ? {} : { refs: view.refs }), ...(view.lead === true ? { lead: true } : {}) })
     }
     else if (view.kind === 'slots') {
       const object = visibleObject(run, view.objectId)
@@ -184,18 +184,30 @@ export const contextOrder = (run: Pick<ComposeRun, 'objects'>, rows: ReadonlyArr
   return { rows: [...heads, ...firstOuts, ...sorted.filter(row => !lead.has(row))], leading: lead.size }
 }
 
-/** The alert rows an alerts view shows, in the context's order: the Run's (every object the caller may see) or these objects'. */
-export const alertsOf = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): ReadonlyArray<AlertRow> => {
+/**
+ * The alert rows an alerts view shows, in the context's order: the Run's (every object the caller may see) or these
+ * objects', or only those on its elements or observables. Asked for its objects' lead alerts too, those follow: first-outs
+ * first. `leading`: the rows it shows before any other (each object's worst and first-out; with `lead`, all of its
+ * own and every first-out).
+ */
+const alertList = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): { readonly rows: ReadonlyArray<AlertRow>; readonly leading: number } => {
   const objects = view.objectIds === 'run' ? run.objects.filter(object => !run.denied.has(object.id)) : view.objectIds.flatMap(id => visibleObject(run, id) ?? [])
-  return contextOrder(run, alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
-    .filter(row => (view.elements === undefined && view.refs === undefined)
-      || (row.alert.subject !== undefined && 'element' in row.alert.subject && view.elements?.includes(row.alert.subject.element) === true)
-      || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true))).rows
+  const all = alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
+  const filtered = view.elements !== undefined || view.refs !== undefined
+  const own = contextOrder(run, all.filter(row => !filtered
+    || (row.alert.subject !== undefined && 'element' in row.alert.subject && view.elements?.includes(row.alert.subject.element) === true)
+    || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true)))
+  if (view.lead !== true || !filtered) return own
+  const listed = new Set(own.rows)
+  const leads = contextOrder(run, all.filter(row => !listed.has(row) && leadsObject(row.alert))).rows
+  const firstOuts = leads.filter(row => row.alert.firstOut !== undefined)
+  return { rows: [...own.rows, ...firstOuts, ...leads.filter(row => row.alert.firstOut === undefined)], leading: own.rows.length + firstOuts.length }
 }
-/** The rows an alerts view needs: a header, then every object's worst and first-out, and at least six alerts where there are. */
+export const alertsOf = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): ReadonlyArray<AlertRow> => alertList(run, view).rows
+/** The rows an alerts view needs: a header, then what it leads with (alertList), and at least six alerts where there are. */
 export const alertRowsFor = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): number => {
-  const rows = alertsOf(run, view)
-  return 1 + Math.max(1, Math.min(rows.length, Math.max(6, contextOrder(run, rows).leading)))
+  const { rows, leading } = alertList(run, view)
+  return 1 + Math.max(1, Math.min(rows.length, Math.max(6, leading)))
 }
 
 /** The refs a state's views read now: its values and trends, and what its drawings bind. */
@@ -243,5 +255,5 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
     return Object.fromEntries([...declared.values()].flatMap(entry => entry.observable.series === null ? []
       : [[entry.observable.series.seriesId, run.series(entry.observable.series.seriesId, new Date(history.fromMs).toISOString(), at.at)] as const]))
   })()
-  return { at, observations, alerts: contextOrder(run, [...alerts.values()]).rows, entities, slots, maps, ...(series === undefined ? {} : { series }) }
+  return { at, observations, alerts: [...alerts.values()], entities, slots, maps, ...(series === undefined ? {} : { series }) }
 }

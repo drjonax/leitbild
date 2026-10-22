@@ -6,6 +6,7 @@
  * connection with what is measured on it; a collection with its table.
  */
 import { priorityLevels, type AlertState } from '../../../core/model/alerts.ts'
+import { leadsObject } from '../alerts/rows.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { Quantity } from '../../../core/observation/model.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
@@ -34,10 +35,12 @@ export const leadRefs = async (run: ComposeRun, objectId: ObjectId, count = 8): 
   return (await byRank(run, read.observations.map(observation => observation.ref))).slice(0, count)
 }
 
-/** The observables declared on an element, by rank. */
+/** The observables declared on an element, by rank; a device that is only a topology node, what its node binds. */
 export const elementRefs = async (run: ComposeRun, objectId: ObjectId, elementId: string, count = 8): Promise<ReadonlyArray<string>> => {
   const declaration = await declarationOf(run, objectId, [elementId])
-  return (await byRank(run, declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? [])).slice(0, count)
+  const declared = declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? []
+  const refs = declared.length > 0 ? declared : (await topologyOf(run, objectId))?.nodes.find(node => node.id === elementId)?.bindings.map(binding => binding.ref) ?? []
+  return (await byRank(run, refs)).slice(0, count)
 }
 
 /** An object's own states: declared on it, not on an element (an operating mode, safety-function statuses); a whole-object default heads with them. */
@@ -53,8 +56,8 @@ const rankOf = (alert: AlertState): number => alert.priority === undefined ? -1 
 const worst = (alerts: ReadonlyArray<AlertState>): AlertState | undefined => [...alerts].sort((left, right) => rankOf(right) - rankOf(left))[0]
 const hasAlerts = (run: ComposeRun, objectIds: ReadonlyArray<string>, pass: (alert: AlertState) => boolean = () => true): boolean =>
   objectIds.some(objectId => visibleObject(run, objectId)?.alerts.some(pass) === true)
-const alertsView = (objectIds: ReadonlyArray<ObjectId>, filter: { readonly elements?: ReadonlyArray<string>; readonly refs?: ReadonlyArray<string> } = {}): DraftView =>
-  ({ kind: 'alerts', objectIds: [...objectIds], ...(filter.elements === undefined ? {} : { elements: [...filter.elements] }), ...(filter.refs === undefined ? {} : { refs: [...filter.refs] }) })
+const alertsView = (objectIds: ReadonlyArray<ObjectId>, filter: { readonly elements?: ReadonlyArray<string>; readonly refs?: ReadonlyArray<string>; readonly lead?: true } = {}): DraftView =>
+  ({ kind: 'alerts', objectIds: [...objectIds], ...(filter.elements === undefined ? {} : { elements: [...filter.elements] }), ...(filter.refs === undefined ? {} : { refs: [...filter.refs] }), ...(filter.lead === true ? { lead: true } : {}) })
 
 const nodeOf = (graph: TopologyGraph, elementId: string | undefined): string | undefined =>
   elementId === undefined ? undefined : graph.nodes.find(node => (node.element ?? node.id) === elementId)?.id
@@ -62,7 +65,11 @@ const topologyOf = async (run: ComposeRun, objectId: ObjectId): Promise<Topology
   const graph = await run.port.topology(objectId)
   return 'refused' in graph ? null : graph
 }
-const aroundView = (objectId: ObjectId, node: string | undefined): DraftView[] => node === undefined ? [] : [{ kind: 'topology', objectId, request: { around: [node], reach: 1 } }]
+/** Around one item, narrowed in a flow graph to its declared group as today's detail is; compose's fit then draws as far as fits. */
+const aroundView = (graph: TopologyGraph, node: string | undefined): DraftView[] => {
+  const group = graph.family === 'flow' ? graph.nodes.find(entry => entry.id === node)?.group : undefined
+  return node === undefined ? [] : [{ kind: 'topology', objectId: graph.objectId, request: { around: [node], ...(group === undefined ? {} : { groups: [group] }), reach: 1 } }]
+}
 
 /** A declared object's topology: a flow graph's overview; else around its worst alarm's element, else its first lead element. */
 const objectTopology = async (run: ComposeRun, object: OperationalObject, lead: ReadonlyArray<string>): Promise<DraftView[]> => {
@@ -73,7 +80,7 @@ const objectTopology = async (run: ComposeRun, object: OperationalObject, lead: 
   const alarmed = worst(object.alerts.filter(alert => alert.subject !== undefined && 'element' in alert.subject))
   const declared = await declaredRefs(run, lead)
   const element = alarmed?.subject !== undefined && 'element' in alarmed.subject ? alarmed.subject.element : lead.map(ref => declared.get(ref)?.element?.id).find(id => id !== undefined)
-  return aroundView(object.id, nodeOf(graph, element))
+  return aroundView(graph, nodeOf(graph, element))
 }
 
 const electricQuantities: ReadonlySet<Quantity> = new Set(['electric-power', 'frequency', 'voltage'])
@@ -108,9 +115,10 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     return [
       ...(refs.length > 0 ? [{ kind: 'values', refs: [...refs] } as DraftView] : []),
       ...(trend.length > 0 ? [{ kind: 'trend', refs: [...trend], horizon: '10m' } as DraftView] : []),
-      ...(hasAlerts(run, [subject.objectId], alert => alert.subject !== undefined && 'element' in alert.subject && alert.subject.element === subject.elementId)
-        ? [alertsView([subject.objectId], { elements: [subject.elementId] })] : []),
-      ...(graph === null ? [] : aroundView(subject.objectId, nodeOf(graph, subject.elementId))),
+      // Its own alerts, then its object's lead alerts, which say why it is where it is (a trip's first-out).
+      ...(hasAlerts(run, [subject.objectId], alert => (alert.subject !== undefined && 'element' in alert.subject && alert.subject.element === subject.elementId) || leadsObject(alert))
+        ? [alertsView([subject.objectId], { elements: [subject.elementId], lead: true })] : []),
+      ...(graph === null ? [] : aroundView(graph, nodeOf(graph, subject.elementId))),
     ]
   }
   if (subject.kind === 'observable') {
@@ -122,7 +130,7 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     return [
       recorded ? { kind: 'trend', refs: [subject.ref], horizon: '10m' } : { kind: 'values', refs: [subject.ref, ...beside] },
       ...(hasAlerts(run, [subject.objectId], alert => alert.observable === subject.ref) ? [alertsView([subject.objectId], { refs: [subject.ref] })] : []),
-      ...(graph === null ? [] : aroundView(subject.objectId, nodeOf(graph, element))),
+      ...(graph === null ? [] : aroundView(graph, nodeOf(graph, element))),
     ]
   }
   if (subject.kind === 'connection') {

@@ -67,6 +67,9 @@ export const groupKey = (row: AlertRow): string => row.group.subjectGroup === un
 /** Undeclared lowest: no rule ranks an alert by its `severity` (R1). */
 export const priorityRank = (priority: Priority | null): number => priority === null ? -1 : priorityLevels.indexOf(priority)
 
+/** An object's lead alerts, listed after an element's own where a view asks (`lead`): its first-outs and what holds until reset (its trips). */
+export const leadsObject = (alert: AlertState): boolean => alert.firstOut !== undefined || alert.latched === true
+
 /** Simulation time in ms; a wall or absent clock cannot be placed on the Run's axis. */
 export const simulationMs = (row: AlertRow): number | null => row.raised?.clock === 'simulation' ? Date.parse(row.raised.at) : null
 

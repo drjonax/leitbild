@@ -11,13 +11,16 @@ import { drawingCache, drawingKey } from '../topology/cache.ts'
 import { flowLayout, type DrawnStops } from '../topology/flow-sizing.ts'
 import type { TopologyLayout } from '../topology/layout.ts'
 import { networkLayout, type NetworkSizing } from '../topology/network.ts'
-import { drawingStops, scopeTopology, TOPOLOGY_REACH, type ScopedTopology, type TopologyRequest } from '../topology/scope.ts'
+import { drawingStops, scopeTopology, TOPOLOGY_REACH, withOtherMediaStopped, type ScopedTopology, type TopologyRequest } from '../topology/scope.ts'
 import type { SearchRun } from '../observation/search.ts'
 import type { VignetteSection } from './model.ts'
 
 export const TOPOLOGY_MAX_NODES = 60
-/** The room a flow drawing is laid out for, in grid units (lead, 21 Oct: four loops need 60 × 33; a narrower frame scrolls sideways). */
-const ROOM = { columns: 66, rows: 36 }
+/**
+ * The room a flow drawing is laid out for, in grid units (lead, 21 Oct: the four-loop reference overview lays out at
+ * 60 × 33 within it, so the window frame fits 1920 px beside its 360 px column; a narrower frame scrolls sideways).
+ */
+export const FLOW_ROOM = { columns: 63, rows: 36 } as const
 
 const labelOf = (graph: TopologyGraph, id: string): string => {
   const node = graph.nodes.find(entry => entry.id === id)
@@ -89,9 +92,18 @@ export const scopeWithin = (graph: TopologyGraph, asked: Request): Scoped => {
     return overview === null ? { ok: false, reason: 'no overview declared' } : { ok: true, scoped: overview }
   }
   const request = Object.fromEntries(Object.entries(asked).filter(([key, value]) => value !== undefined && key !== 'overview')) as TopologyRequest
+  const scoped = scopeByReach(graph, request)
+  // Around items with media named, every other medium they carry stops the drawing at them, so it shows where they join.
+  if (!scoped.ok || request.around === undefined || request.media === undefined) return scoped
+  const others = [...new Set(graph.nodes.filter(node => request.around!.includes(node.id)).flatMap(node => node.ports.flatMap(port => port.media)))]
+  return { ...scoped, scoped: withOtherMediaStopped(scoped.scoped, request.around, others) }
+}
+
+const scopeByReach = (graph: TopologyGraph, request: TopologyRequest): Scoped => {
   const oneEnded = !(request.from !== undefined && request.to !== undefined)
   for (let reach = request.reach ?? TOPOLOGY_REACH; reach >= 1; reach -= 1) {
-    const result = scopeTopology(graph, { ...request, ...(oneEnded ? { reach } : {}) })
+    // A vignette draws a node between drawn ones rather than name it at a stop on each side.
+    const result = scopeTopology(graph, { ...request, between: true, ...(oneEnded ? { reach } : {}) })
     if (!result.ok) return { ok: false, reason: result.refusal.code }
     if (result.scoped.nodes.length <= TOPOLOGY_MAX_NODES) return { ok: true, scoped: result.scoped, ...(oneEnded && reach !== (request.reach ?? TOPOLOGY_REACH) ? { reach } : {}) }
     if (!oneEnded) break
@@ -102,7 +114,7 @@ export const scopeWithin = (graph: TopologyGraph, asked: Request): Scoped => {
 export interface Drawing { readonly layout: TopologyLayout; readonly stops: DrawnStops }
 const drawings = drawingCache<Promise<Drawing | null>>(64)
 export const drawingOf = (scoped: ScopedTopology): Promise<Drawing | null> => drawings.get(drawingKey(scoped, scoped.graph.family), async () => {
-  if (scoped.graph.family === 'flow') return flowLayout(scoped, ROOM)
+  if (scoped.graph.family === 'flow') return flowLayout(scoped, FLOW_ROOM)
   const layout = await networkLayout(scoped, networkSizing(scoped.graph))
   const mediumOf = (edge: string): string => scoped.graph.edges.find(entry => entry.id === edge)!.medium
   return { layout, stops: Object.fromEntries(scoped.stubs.map((stop, at) => [`s${at}`, { direction: stop.direction, others: stop.others.map(other => labelOf(scoped.graph, other.node)), medium: mediumOf(stop.edges[0]!) }])) }

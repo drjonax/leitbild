@@ -1,7 +1,8 @@
 /**
  * Names to what they name, as the caller (architecture A2), by these rules in order, never by a guess: a Pack id is
  * refused with its categories; a Scenario connection id is a connection; an object id an object; `objectId#x` an exact
- * ref its Pack reads, else an element by id or label, else a qualified name; anything else a search match of class 3
+ * ref its Pack reads, else an element by id or label, else a device its topology draws, by id or label (an element
+ * whose id is its node's), else a qualified name; anything else a search match of class 3
  * or better, else refused with the nearest names. A collection names one category by id, label or "Label (pack)".
  */
 import { observableRefSchema, refObjectId } from '../../../core/model/alerts.ts'
@@ -11,6 +12,7 @@ import { observationProviderFor } from '../observation/port.ts'
 import { resolveName, searchObservables, type SearchRun } from '../observation/search.ts'
 import { declarationOf, same, visibleObject } from './declared.ts'
 import type { Collection, ComposeIssue } from './model.ts'
+import { topologyOf } from './topology.ts'
 
 export interface ComposeRun extends SearchRun {
   readonly clock: SimulationClockState | undefined
@@ -56,6 +58,9 @@ export const resolveSubject = async (run: ComposeRun, name: string | { readonly 
     const part = name.slice(hash + 1)
     const element = (await declarationOf(run, id))?.elements.find(entry => entry.id === part || same(entry.label, part) || (entry.shortLabel !== undefined && same(entry.shortLabel, part)))
     if (element !== undefined) return { kind: 'element', objectId: id, elementId: element.id }
+    // A device its topology draws (a valve inside a vessel) by id or label: the element its node stands for, else the node.
+    const node = (await topologyOf(run, id))?.nodes.find(entry => entry.id === part || same(entry.label, part) || (entry.shortLabel !== undefined && same(entry.shortLabel, part)))
+    if (node !== undefined) return { kind: 'element', objectId: id, elementId: node.element ?? node.id }
     const [ref] = await resolveName(run, name)
     if (ref !== undefined) return { kind: 'observable', objectId: id, ref }
   }
