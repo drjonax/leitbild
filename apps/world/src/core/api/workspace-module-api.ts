@@ -1127,7 +1127,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
     descriptor: {
       id: 'world.simulation-run.scenario-source',
       moduleId: WORLD_MODULE_ID, kind: 'query', scope: { kind: 'resource', resourceType: 'world.simulation-run' },
-      title: 'Read pinned Scenario source', description: 'Read the exact editable Scenario Definition pinned by this Run, including authoring-only scenario instructions. Does not reconstruct source from physical state or merge runtime edits. Not part of the default assistant grants.',
+      title: 'Read pinned Scenario source', description: 'Read the exact editable Scenario Definition pinned by this Run, including authoring-only scenario instructions and its timeline. Does not reconstruct source from physical state or merge runtime edits. Refused to AI callers, from whom a Scenario\'s timeline is hidden.',
       risk: 'read', idempotent: true, inputSchema: capabilityJsonSchema(emptyInputSchema), outputSchema: capabilityJsonSchema(runScenarioSourceSchema),
     },
     invoke: async (registry, invocation) => {
@@ -1713,6 +1713,41 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
   },
 ])
 
+/**
+ * D13 "hide the script": an AI caller is never given a Scenario's timeline, its scripted cues (a fault a script injects
+ * among them). A Run's pinned source is refused; a definition's source and an inspection come without it; an update
+ * it sends keeps the timeline people wrote and may not replace one it cannot read. People keep every view.
+ */
+const scriptRefused: ReadonlySet<string> = new Set(['world.simulation-run.scenario-source'])
+const scriptRedacted: ReadonlySet<string> = new Set(['world.scenario.read', 'world.scenario.inspect', 'world.simulation-run.inspect'])
+const scriptHidden = (message: string): Response => apiError(403, 'scenario_script_hidden', message)
+
+const withoutTimeline = (value: unknown): unknown => {
+  if (typeof value !== 'object' || value === null || !('timeline' in value)) return value
+  const { timeline: _timeline, ...rest } = value as Record<string, unknown>
+  return rest
+}
+/** A script-bearing result as an AI caller reads it: a source without its timeline; an inspection without its timeline section or the timeline in the source it shows. */
+const withoutScript = async (response: Response): Promise<Response> => {
+  if (!response.ok) return response
+  const body = await response.json() as { readonly result: Record<string, unknown> }
+  const sections = body.result.sections as ReadonlyArray<{ readonly id: string; readonly data?: unknown }> | undefined
+  const result = sections === undefined ? { ...body.result, source: withoutTimeline(body.result.source) }
+    : { ...body.result, sections: sections.filter(section => section.id !== 'timeline').map(section => ({ ...section, ...(section.data === undefined ? {} : { data: withoutTimeline(section.data) }) })) }
+  return json({ ...body, result }, { status: response.status })
+}
+/** An AI caller's Scenario update: the stored timeline kept where it sends none; refused where it would replace one. */
+const scriptKept = async (registry: SimulationRunRegistry, invocation: ApiInvocation): Promise<ApiInvocation | Response> => {
+  const input = createScenarioInputSchema.parse(invocation.input)
+  const stored = (await registry.currentScenario(requireScenarioDefinitionId(invocation)))?.document.timeline
+  if (stored === undefined) return invocation
+  // One it sends unchanged (a source it wrote whole) it already knows.
+  if (input.source.timeline !== undefined && JSON.stringify(input.source.timeline) !== JSON.stringify(stored)) {
+    return scriptHidden('This Scenario\'s timeline is hidden from AI callers; an update from one keeps it as people wrote it and may not replace it')
+  }
+  return { ...invocation, input: { ...input, source: { ...input.source, timeline: stored } } }
+}
+
 const invokeCapability = async (
   registry: SimulationRunRegistry,
   capabilityId: string,
@@ -1760,8 +1795,12 @@ const invokeCapability = async (
       }
     }
 
-    const response = await worldCapabilities.invoke(capabilityId, registry, invocation)
-    if (response) return response
+    const ai = invocation.access.actor.kind === 'ai'
+    if (ai && scriptRefused.has(capabilityId)) return scriptHidden('A Run\'s pinned Scenario source carries its timeline, which is hidden from AI callers; world.simulation-run.inspect describes the Run without it')
+    const granted = ai && capabilityId === 'world.scenario.update' ? await scriptKept(registry, invocation) : invocation
+    if (granted instanceof Response) return granted
+    const response = await worldCapabilities.invoke(capabilityId, registry, granted)
+    if (response) return ai && scriptRedacted.has(capabilityId) ? await withoutScript(response) : response
 
     const workspaceCapability = registry.workspaceCapabilities.find(capability => capability.id === capabilityId)
     if (workspaceCapability) {

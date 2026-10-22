@@ -778,7 +778,8 @@ Action: Inspect «OTHER-STEP».
     const parsedScenarioInspection = inspectionViewSchema.parse(scenarioInspection.body?.result)
     expect(parsedScenarioInspection.sections.map(section => section.id)).toContain('authored-definition')
     expect(parsedScenarioInspection.sections.map(section => section.id)).toContain('assets')
-    expect(parsedScenarioInspection.sections.map(section => section.id)).toContain('timeline')
+    // D13: a Scenario's timeline is hidden from an AI caller (agent-hidden-faults.test.ts holds a person's view).
+    expect(parsedScenarioInspection.sections.map(section => section.id)).not.toContain('timeline')
 
     const created = await call<{ result: { id: string }; createdResources: Array<{ id: string }> }>(
       registry,

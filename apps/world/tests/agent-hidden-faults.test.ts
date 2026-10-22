@@ -86,3 +86,48 @@ describe('an injected fault is withheld from an AI caller\'s journal reads (D-88
     expect(actions(person.body.result.events)).toContain(fault)
   })
 })
+
+describe('a Scenario\'s script is hidden from AI callers (D13)', () => {
+  test('the Run\'s inspection has no timeline section for an AI caller; a person\'s has it', async () => {
+    const sections = (call: Call) => call.body.result.sections.map((section: { id: string }) => section.id)
+    const ai = await invoke('world.simulation-run.inspect', { actor: 'ai' })
+    expect(sections(ai)).not.toContain('timeline')
+    expect(JSON.stringify(ai.body)).not.toContain(fault)
+    expect(sections(await invoke('world.simulation-run.inspect', { actor: 'human' }))).toContain('timeline')
+  })
+
+  test('the Run\'s pinned source is refused to an AI caller; a person reads it with its timeline', async () => {
+    const ai = await invoke('world.simulation-run.scenario-source', { actor: 'ai' })
+    expect([ai.status, ai.body.error.code]).toEqual([403, 'scenario_script_hidden'])
+    const person = await invoke('world.simulation-run.scenario-source', { actor: 'human' })
+    expect(person.status).toBe(200)
+    expect(person.body.result.source.timeline.cues.map((cue: { id: string }) => cue.id)).toEqual(['scripted-leak'])
+  })
+
+  test('a definition\'s source and inspection come without the timeline for an AI caller; a person\'s with it', async () => {
+    const target = await definition()
+    const read = await invoke('world.scenario.read', { actor: 'ai', definition: target })
+    expect(read.status).toBe(200)
+    expect(read.body.result.source.title).toBe('Plant persistence fixture')
+    expect(read.body.result.source.timeline).toBeUndefined()
+    expect(JSON.stringify(read.body)).not.toContain(fault)
+    expect((await invoke('world.scenario.read', { actor: 'human', definition: target })).body.result.source.timeline.cues.map((cue: { id: string }) => cue.id)).toEqual(['scripted-leak'])
+    const inspected = await invoke('world.scenario.inspect', { actor: 'ai', definition: target })
+    expect(inspected.body.result.sections.map((section: { id: string }) => section.id)).not.toContain('timeline')
+    expect(inspected.body.result.sections.find((section: { id: string }) => section.id === 'authored-definition').data.timeline).toBeUndefined()
+    expect(JSON.stringify(inspected.body)).not.toContain(fault)
+    expect((await invoke('world.scenario.inspect', { actor: 'human', definition: target })).body.result.sections.map((section: { id: string }) => section.id)).toContain('timeline')
+  })
+
+  test('an AI caller\'s update keeps the timeline people wrote, and may not replace it', async () => {
+    const target = await definition()
+    const before = (await invoke('world.scenario.read', { actor: 'human', definition: target })).body.result.source
+    const seen = (await invoke('world.scenario.read', { actor: 'ai', definition: target })).body.result.source
+    const updated = await invoke('world.scenario.update', { actor: 'ai', definition: target, input: { source: { ...seen, title: 'Plant persistence fixture, revised' } } })
+    expect(updated.status).toBe(200)
+    const after = (await invoke('world.scenario.read', { actor: 'human', definition: await definition() })).body.result.source
+    expect([after.title, after.timeline]).toEqual(['Plant persistence fixture, revised', before.timeline])
+    const replacing = await invoke('world.scenario.update', { actor: 'ai', definition: await definition(), input: { source: { ...seen, timeline: { cues: [] } } } })
+    expect([replacing.status, replacing.body.error.code]).toEqual([403, 'scenario_script_hidden'])
+  })
+})
