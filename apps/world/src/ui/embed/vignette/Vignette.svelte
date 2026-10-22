@@ -26,6 +26,8 @@
   let wallNow = $state(Date.now())
 
   const runId = $derived(simulationRunIdSchema.parse(envelope.subject.id))
+  /** This display, as an element's pop-over names it when it opens the element's default in the display window. */
+  const from = $derived({ key: envelope.state, title: envelope.title })
   runOnMount(() => {
     const session = createVignetteSession({
       runId,
@@ -86,7 +88,7 @@
       {:else}Connecting to the Run…{/if}
     </p>
   {:else}
-    <Sections {view} {snapshot} {palette} frozen={footer.word === 'FROZEN'} {runId} />
+    <Sections {view} {snapshot} {palette} frozen={footer.word === 'FROZEN'} {runId} {from} />
   {/if}
 
   <footer title={footer.why}>

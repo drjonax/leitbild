@@ -55,6 +55,9 @@ describe('readout', () => {
     expect(valueLook(level, [observation(level.ref, 50, { priority: 'notice' })], level.ref)).toMatchObject({ tone: null, emphasis: true })
     expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ text: '?', unit: '', bar: null })
     expect(valueLook(level, [observation(level.ref, null, { quality: 'not-applicable' })], level.ref).text).toBe('—')
+    // Outside its declared validity a reading shows neither its value nor its unit, and draws no bar.
+    const invalid = valueLook(level, [observation(level.ref, 50, { quality: 'not-applicable' })], level.ref)
+    expect([invalid.text, invalid.unit, invalid.value, invalid.bar]).toEqual(['—', '', null, null])
     expect(valueLook(level, [], level.ref).text).toBe('?')
   })
 

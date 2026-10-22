@@ -1,6 +1,10 @@
+import type { EmbeddedViewEnvelope } from '@leitbild/contracts'
+import { openedListing } from '../opened-display.ts'
+import type { DisplayOpening, ViewHost } from '../view-host.ts'
+
 // The pop-over an interactive drawing opens on one of its items, and where it
 // stands: a press (a click, a tap, Enter or Space) opens the item's pop-over
-// with its actions, and a second press on it closes it; hovering a moment
+// (its actions only in the display window), and a second press on it closes it; hovering a moment
 // opens a quick look, which never takes over a pop-over a press opened;
 // leaving, Esc or a press outside close either. It never covers the item it
 // is about, and reads at 100 % whatever the display's zoom.
@@ -71,3 +75,29 @@ export const popoverPlacement = (item: Box, popover: { readonly width: number; r
 
 /** A popover's width, in its own px. */
 export const POPOVER_WIDTH = 340
+
+/**
+ * What an element's pop-over offers under the element's default, by where its
+ * display is shown (view-host.ts): its Pack's actions only in the display
+ * window; in a chat answer, whose page relays to the Workspace's window, the
+ * way there; elsewhere (a procedure tag's dialog) nothing to act on.
+ */
+export type ElementOffer = 'actions' | 'open-in-window' | 'nothing'
+export const elementOffer = (opening: DisplayOpening | null): ElementOffer =>
+  opening === 'window' ? 'actions' : opening === 'relay' ? 'open-in-window' : 'nothing'
+
+/** The display an element's pop-over opened from, as the listing of the element's default names it (opened-display.ts). */
+export interface OpenedFrom {
+  /** Stable for that display: the element's default opened from it keeps one key. */
+  readonly key: string
+  readonly title: string
+}
+
+/**
+ * Opens the element's default (`envelope`, World's default display of the
+ * element) in the Workspace's display window, through the chat page that
+ * relays to it, captioned with the display it was opened from. False where
+ * nothing opens it.
+ */
+export const openElementDefault = (host: Pick<ViewHost, 'openDisplay'>, from: OpenedFrom, envelope: EmbeddedViewEnvelope): boolean =>
+  host.openDisplay({ state: envelope.state, title: envelope.title, listing: () => openedListing({ ...from, envelope }, { state: envelope.state, title: envelope.title }) })
