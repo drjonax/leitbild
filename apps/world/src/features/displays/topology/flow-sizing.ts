@@ -5,21 +5,24 @@
 // a stop; nothing is chained in line, and drawing ids are the graph's node and
 // edge ids. A store or transfer stands two cells by four, as OpenBridge's tank
 // and heat exchanger do, and the lanes' hub as the vessel it is drawn as, its
-// head above its nozzles. Each item writes its name and, where there is room,
-// its readings (layout.ts readingRefs) under it; a group writes how many of
-// its members run. The ceilings are today's displays': a drawing across lanes
+// head above its nozzles. Each item writes its name and under it its state
+// word, the command it does not follow and, where there is room, its readings
+// (layout.ts itemText); a group writes how many of its members run. The ceilings are today's displays': a drawing across lanes
 // keeps the unit overview's twelve crossings, one within a lane an equipment
 // detail's four. The layout comes back in grid units.
 import { layoutDiagram, type DiagramProfile } from '../diagram/index.ts'
 import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import { flowPlan, type FlowSizing } from './flow.ts'
-import { groupName, readingRefs, type TopologyLayout } from './layout.ts'
+import { groupName, itemText, type TopologyLayout } from './layout.ts'
 import type { ScopedTopology } from './scope.ts'
 
 /** The renderer's grid pitch and its text lines (16 high, about 8 a character), in the engine's units; a reading takes up to ten characters ("15.51 MPa"). */
 const GRID = 24
 const LINE = { height: 16, perCharacter: 8 }
 const READING_CHARACTERS = 10
+/** A state word ("ON LINE", "part open"), and the command it does not follow ("commanded RUN"). */
+const STATE_CHARACTERS = 9
+const COMMAND_CHARACTERS = 13
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */
 const VESSEL_ENDS = { top: 2 * GRID, bottom: GRID }
 
@@ -44,7 +47,7 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
   const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
   return {
-    key: 'vignette-flow-5',
+    key: 'vignette-flow-6',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
     bar: node => node.class === 'bus' || isHeader(node),
@@ -57,8 +60,12 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
     item: item => {
       const grouped = item.members.length > 1
       const text = grouped ? groupName(item.members.map(label)) : label(item.node)
-      // A group says how many of its members run ("RUN 2/2"); a lone item its readings.
-      const lines = [line(text.length, true), ...(grouped ? [line(7, true)] : readingRefs(item.node.bindings).map(() => line(READING_CHARACTERS, false)))]
+      // A group says how many of its members run ("RUN 2/2"); a lone item its state word, the command it does not follow, and its readings.
+      const written = itemText(item.node.bindings)
+      const lines = [line(text.length, true), ...(grouped ? [line(7, true)] : [
+        ...(written.state === null ? [] : [line(STATE_CHARACTERS, true), line(COMMAND_CHARACTERS, false)]),
+        ...written.readings.map(() => line(READING_CHARACTERS, false)),
+      ])]
       const vessel = item.role === 'hub'
       const cells = vessel || TALL.has(item.node.class) ? { width: 2, height: 4 } : { width: 2, height: 2 }
       return { label: text, node: { cells, portInset: 0, text: { lines }, frameable: false, ...(vessel ? { ends: VESSEL_ENDS } : {}) }, keep: null }

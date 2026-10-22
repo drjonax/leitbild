@@ -165,11 +165,23 @@ describe('flow symbols', () => {
       ['mover', true, false, { tag: 'obi-pump-on-horizontal' }],
       ['valve', true, false, { tag: 'obc-valve-analog-two-way-icon', value: 40 }],
     ])
-    expect(drawing.texts.map(text => text.lines)).toEqual([['Tank', '62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
+    expect(drawing.texts.map(text => text.lines.map(line => line.text))).toEqual([['Tank', '62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
     const pipes = drawing.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0')
     expect(pipes.every(segment => segment.value === 'open-flow')).toBe(true)
     expect(pipes.some(segment => segment.kind === 'direction')).toBe(true)
     expect(drawing.segments.some(segment => segment.kind === 'endpoint')).toBe(true)
+  })
+
+  test('a lone item writes its state in its observable\'s declared words and, on a line of its own, the command it does not follow; unknown reads "?"', () => {
+    const lone: Topology = {
+      ...section,
+      layout: { ...section.layout, nodes: section.layout.nodes.map(node => (node.id === 'mover' ? { id: 'mover', x: 5, y: 2, width: 2, height: 2, ports: node.ports, text: { x: 7, y: 2, width: 4, height: 2, lines: 3, side: 'right' as const } } : node)) },
+      nodes: section.nodes.map(node => (node.id === 'mover' ? { ...node, bindings: [{ role: 'running' as const, ref: 'unit:x#runA', quantity: 'state' as const, unit: '', states: [{ value: 'on', label: 'RUN', active: true as const }, { value: 'off', label: 'STOP' }] }] } : node)),
+    }
+    const words = (observations: ReadonlyArray<Observation>) => flowDrawing(lone, observations, [], false).texts.find(text => text.id === 'mover')!.lines.map(line => `${line.kind}:${line.text}`)
+    expect(words([{ ...observation('unit:x#runA', 'off'), why: 'commanded RUN' }])).toEqual(['name:Mover A', 'word:STOP', 'command:commanded RUN'])
+    expect(words([observation('unit:x#runA', 'on')])).toEqual(['name:Mover A', 'word:RUN'])
+    expect(words([observation('unit:x#runA', 'on', 'bad')])).toEqual(['name:Mover A', 'word:?'])
   })
 
   test('an active alert on an item\'s element frames it at its priority; a returned one, or one on another object, does not', () => {
@@ -186,7 +198,7 @@ describe('flow symbols', () => {
     const stale = flowDrawing(section, [observation('unit:x#level', 62, 'stale'), observation('unit:x#runA', true, 'bad'), observation('unit:x#flowA', 0)], [], false)
     expect(stale.vessels[0]).toMatchObject({ level: null, unknown: true })
     expect(stale.devices.map(device => [device.id, device.unknown])).toEqual([['mover', true], ['valve', true]])
-    expect(stale.texts[1]!.lines[1]).toBe('RUN ?/2')
+    expect(stale.texts[1]!.lines[1]!.text).toBe('RUN ?/2')
     expect(stale.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'empty')).toBe(true)
     const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)

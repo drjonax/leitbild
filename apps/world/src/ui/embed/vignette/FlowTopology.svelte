@@ -12,6 +12,7 @@
   import { paintLines } from './lines.ts'
   import { nextPopover, POPOVER_CLOSED, type PopoverState } from './popover.ts'
   import type { AlertTone } from './readout.ts'
+  import { VIGNETTE_ROW_PX } from './grid.ts'
   import Vessel from './Vessel.svelte'
   import './openbridge.ts'
 
@@ -37,6 +38,8 @@
   let zoom = $state(1)
   runOnMount(() => embeddedDisplayFrame().subscribe(presentation => { zoom = presentation.zoom }))
 
+  /** A device symbol's two grid cells. */
+  const SYMBOL_PX = 2 * VIGNETTE_ROW_PX
   /** OpenBridge's alert type for each priority drawn in colour; emergency is its critical level. */
   const ALERT_TYPE: Readonly<Record<AlertTone, string>> = { caution: 'caution', warning: 'warning', alarm: 'alarm', critical: 'level-critical' }
 
@@ -86,7 +89,7 @@
       </div>
     {/each}
     {#each drawing.devices as device (device.id)}
-      <div class="placed" role="button" tabindex="0" aria-label={device.title} title={device.title} style:left={`${device.x}px`} style:top={`${device.y}px`} onclick={event => press(device.id, event.currentTarget)} onkeydown={key(device.id)}>
+      <div class="placed device" role="button" tabindex="0" aria-label={device.title} title={device.title} style:left={`${device.x - SYMBOL_PX / 2}px`} style:top={`${device.y - SYMBOL_PX / 2}px`} onclick={event => press(device.id, event.currentTarget)} onkeydown={key(device.id)}>
         <obc-automation-button variant="regular" positioning="point" showReadoutStack={false} state={device.on ? 'open' : 'closed'} static={device.unknown} orientation={device.orientation} activated={popover.kind === 'open' && popover.item === device.id} progress={false} hasBadgeSpacer={false} alert={device.tone !== null} alertFrameStatus={device.tone === null ? 'caution' : ALERT_TYPE[device.tone]} alertFrameMode="acked-active" alertFrameThickness="small" alertFrameType="regular" showAlertCategoryIcon={false} showAlertIcon={false}>
           {#if device.glyph?.tag === 'obc-valve-analog-two-way-icon'}
             <obc-valve-analog-two-way-icon slot="icon" value={device.glyph.value} closed={device.glyph.value === 0} vertical={device.vertical}></obc-valve-analog-two-way-icon>
@@ -98,11 +101,11 @@
     {/each}
     {#each drawing.texts as text (text.id)}
       <div class={`text ${text.tone ?? ''}`} data-item={text.id} style:left={`${text.x}px`} style:top={`${text.y}px`} style:width={`${text.width}px`} style:--line={`${FLOW_LINE_PX}px`} title={text.title}>
-        {#each text.lines as line, at (at)}<span class:name={at === 0}>{line}</span>{/each}
+        {#each text.lines as line, at (at)}<span class={line.kind}>{line.text}</span>{/each}
       </div>
     {/each}
     {#if open !== undefined && opener !== null}
-      <ElementPopover {runId} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0] ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
+      <ElementPopover {runId} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0]?.text ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
     {/if}
   </div>
 </div>
@@ -113,12 +116,17 @@
   .drawing { position: relative; }
   canvas { position: absolute; left: 0; top: 0; }
   .placed { position: absolute; }
+  /* A device's button is its symbol's two cells, so a press, a pointer and the focus ring find it; the symbol stands at its centre. */
+  .device { width: calc(2 * var(--row)); height: calc(2 * var(--row)); display: grid; place-items: center; }
   .box { display: block; }
   [role='button']:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
   /* A line may run a few pixels past the width the sizing reserved (8 px a character; capitals are wider): the layout keeps text clear of other items by more. */
   .text { position: absolute; display: flex; flex-direction: column; font-size: 12px; line-height: var(--line); white-space: nowrap; pointer-events: none; }
   .text span { color: var(--element-neutral-color); font-variant-numeric: tabular-nums; }
-  .text .name { color: var(--element-active-color); }
+  .text .name, .text .word { color: var(--element-active-color); }
+  .text .word { font-weight: 600; }
+  /* A command the item does not follow: bold, as today's display writes its CMD word. */
+  .text .command { color: var(--element-active-color); font-weight: 700; }
   .text.caution .name, .text.warning .name, .text.alarm .name, .text.critical .name { font-weight: 700; text-decoration: underline 2px; text-underline-offset: 2px; }
   .text.caution .name { text-decoration-color: var(--display-caution-mark); }
   .text.warning .name { text-decoration-color: var(--display-warning-mark); }
