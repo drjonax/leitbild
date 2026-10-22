@@ -1,6 +1,6 @@
 import { workspaceDefinitionRevisionReferenceSchema } from '@leitbild/contracts'
 import { z } from 'zod'
-import { electricalConnectionDefinitionSchema, electricalPortDefinitionSchema, electricalPortsFromObject, geoJsonGeometrySchema, type CompiledScenario } from '../model/index.ts'
+import { electricalConnectionDefinitionSchema, electricalPortDefinitionSchema, electricalPortsFromObject, geoJsonGeometrySchema, objectIdSchema, type CompiledScenario } from '../model/index.ts'
 import type { WorldPack } from '../packs/protocol.ts'
 import { defaultHistorianLimits } from '../../features/historian/policy.ts'
 
@@ -19,7 +19,7 @@ export const scenarioPreviewSchema = z.object({
     layers: z.array(z.string()),
   }).strict(),
   assets: z.array(z.object({
-    id: z.string(), label: z.string(), kind: z.string(), packId: z.string(),
+    id: objectIdSchema, label: z.string(), kind: z.string(), packId: z.string(),
     electricalPorts: z.array(electricalPortDefinitionSchema),
     geometry: geoJsonGeometrySchema.optional(),
   }).strict()),

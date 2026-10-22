@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { workspaceDefinitionRevisionReferenceSchema } from '@leitbild/contracts'
   import { untrack } from 'svelte'
+  import type { ObjectId } from '../../core/model/index.ts'
   import { scenarioAuthoringCatalogSchema, type ScenarioAuthoringCatalog } from '../../core/scenarios/authoring.ts'
   import { scenarioDefinitionSchema } from '../../core/scenarios/definition.ts'
   import { scenarioPreviewSchema, scenarioWriteResultSchema, type ScenarioPreview } from '../../core/scenarios/authoring-preview.ts'
@@ -96,13 +98,13 @@
         }
         const parsed = scenarioDefinitionSchema.parse(definitionResponse.source)
         draft = deepCopy({ ...parsed, timeline: parsed.timeline ?? { cues: [] } }) as ScenarioDraft
-        editing = {
+        editing = workspaceDefinitionRevisionReferenceSchema.parse({
           workspaceId,
           moduleId: 'world',
           type: 'world.scenario',
           id: definitionResponse.source.id,
           revisionId: definitionResponse.revisionId,
-        }
+        })
       }
       savedDocument = JSON.stringify(draft)
     } catch (cause) {
@@ -345,9 +347,9 @@
     draft = { ...draft }
   }
 
-  const scenarioObjectDenies = (objectId: string): ReadonlyArray<'inspect' | 'change'> =>
+  const scenarioObjectDenies = (objectId: ObjectId): ReadonlyArray<'inspect' | 'change'> =>
     draft.agentRestrictions.objects.find(entry => entry.objectId === objectId)?.deny ?? []
-  const setScenarioObjectRestriction = (objectId: string, effect: 'inspect' | 'change', denied: boolean): void => {
+  const setScenarioObjectRestriction = (objectId: ObjectId, effect: 'inspect' | 'change', denied: boolean): void => {
     const current = scenarioObjectDenies(objectId)
     const deny = denied ? [...new Set([...current, effect])] : current.filter(value => value !== effect)
     draft.agentRestrictions.objects = deny.length === 0
