@@ -68,8 +68,6 @@
     "@oicl/connector-diagram": "1.0.0",
     "@oicl/openbridge-webcomponents": "2.0.0",
     "@types/bun": "1.4.0",
-    "harfbuzzjs": "1.6.1",
-    "subset-font": "2.9.0",
     "typescript": "^6.0.3"
   },
   "engines": {
