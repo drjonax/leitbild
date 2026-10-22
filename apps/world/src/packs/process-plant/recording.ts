@@ -10,10 +10,12 @@ import type { ProcessPlantVariableHandle } from './runtime/variable-table.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
 import type { CompiledProcessPlant } from './plant-compiler.ts'
 import type { VariablePath } from './graph/index.ts'
-import { processPlantSignalQuality } from './signals.ts'
+import { isInjectedFault, processPlantSignalQuality } from './signals.ts'
 
+/** The variables a profile records; never a fault the scenario injects, which no person or AI agent reads back (isInjectedFault). */
 export const recordedPlantVariables = (plant: CompiledProcessPlant, profileId: string) => plant.graph.variables.filter(variable =>
-  profileId === 'engineering' || ['state', 'control', 'discrete'].includes(variable.descriptor.kind) || variable.descriptor.tagId !== undefined || variable.descriptor.quantity === 'power')
+  !isInjectedFault(plant.graph.signalBindingByPath.get(variable.path) ?? {})
+  && (profileId === 'engineering' || ['state', 'control', 'discrete'].includes(variable.descriptor.kind) || variable.descriptor.tagId !== undefined || variable.descriptor.quantity === 'power'))
 
 export const processPlantRecordingProfiles: ReadonlyArray<RecordingProfileDescriptor> = [{
   id: 'operations',

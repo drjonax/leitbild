@@ -5,6 +5,8 @@ import type { VariablePath } from '../graph/index.ts'
 import { processQuantitySchema, variableDisciplineSchema, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantVariableSnapshot } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { isInjectedFault } from '../signals.ts'
+import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { capabilityTargetNotFound, paginateProcessPlantSearch, processPlantSearchPaginationShape, requirePlant } from './common.ts'
 
 export const variablesReadQuerySchema = z.object({
@@ -30,6 +32,9 @@ const snapshotsFor = (
   system: ProcessPlantRuntimeInstance,
   paths: ReadonlyArray<VariablePath>,
 ): ReadonlyArray<ProcessPlantVariableSnapshot> => paths.map(path => {
+  if (isInjectedFault(system.plant.graph.signalBindingByPath.get(path) ?? {})) {
+    return rejectCapabilityTarget(`${path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
+  }
   try {
     return system.runtime.readVariableSnapshot(path)
   } catch (error) {
@@ -75,7 +80,7 @@ export const answerProcessPlantVariableQuery = (config: {
     ? [...config.plants.values()]
     : [requirePlant(config.plants, payload.plantId)]
   const matches = plants.flatMap(system => system.runtime.snapshot().variables
-    .filter(variable => matchesSearch(variable, payload))
+    .filter(variable => !isInjectedFault(system.plant.graph.signalBindingByPath.get(variable.path) ?? {}) && matchesSearch(variable, payload))
     .map(variable => ({ plantId: system.plant.id, variable })))
   const page = paginateProcessPlantSearch(matches, payload.offset, payload.limit)
   return { total: page.total, offset: page.offset, returned: page.returned, hasMore: page.hasMore, variables: page.items }

@@ -8,7 +8,8 @@ import {
   processPlantSignalQuality,
   processPlantSignalReferenceSchema,
   processPlantSignalView,
-  resolveProcessPlantSignalBinding,
+  isInjectedFault,
+  readableProcessPlantSignalBinding,
   signalMeasuredOn,
 } from '../signals.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
@@ -179,13 +180,13 @@ export const answerProcessPlantSignalQuery = (config: {
     const system = requirePlant(config.plants, payload.plantId)
     return {
       plantId: payload.plantId,
-      signals: payload.signals.map(signal => processPlantSignalView(resolveProcessPlantSignalBinding(system.plant.graph, signal))),
+      signals: payload.signals.map(signal => processPlantSignalView(readableProcessPlantSignalBinding(system.plant.graph, signal))),
     }
   }
   if (config.request.capabilityId === 'world.process-plant.signals.read') {
     const payload = signalsReadQuerySchema.parse(config.request.input)
     const system = requirePlant(config.plants, payload.plantId)
-    const bindings = payload.signals.map(signal => resolveProcessPlantSignalBinding(system.plant.graph, signal))
+    const bindings = payload.signals.map(signal => readableProcessPlantSignalBinding(system.plant.graph, signal))
     return {
       plantId: payload.plantId,
       ...(payload.operations === undefined ? {} : { operations: operationsOn(config, system, new Set(bindings.map(binding => String(binding.path)))) }),
@@ -213,6 +214,7 @@ export const answerProcessPlantSignalQuery = (config: {
     ? [...config.plants.values()]
     : [requirePlant(config.plants, payload.plantId)]
   const matches = plants.flatMap(system => system.plant.graph.signalBindings
+    .filter(binding => !isInjectedFault(binding))
     .map(processPlantSignalView)
     .filter(binding => matchesSignalSearch(binding, payload))
     .map(signal => ({ plantId: system.plant.id, signal })))

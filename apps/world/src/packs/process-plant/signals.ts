@@ -50,6 +50,41 @@ export const resolveProcessPlantSignalBinding = (
   throw new Error('process signal reference must define path or tagId')
 }
 
+/**
+ * A fault the scenario injects (a valve's failure, a leak's area) is the
+ * instructor's knob, never a reading: no person or AI agent searches, reads,
+ * evaluates, records or is shown it, so none can tell an injected fault from
+ * what the Plant does. Instructor actions and the Scenario set it through
+ * their own path. A boundary (the grid's frequency) is a condition outside
+ * the Plant that its instruments read, and stays a reading.
+ */
+export const isInjectedFault = (binding: Pick<ProcessSignalBinding, 'actuation'>): boolean => binding.actuation === 'faultInjection'
+
+/** A signal as a person or AI agent reads it: refused, with why, where it is a fault the scenario injects. */
+export const readableProcessPlantSignalBinding = (
+  graph: CompiledPlantGraph,
+  reference: ProcessPlantSignalReference,
+): ProcessSignalBinding => {
+  const binding = resolveProcessPlantSignalBinding(graph, reference)
+  return isInjectedFault(binding)
+    ? rejectCapabilityTarget(`${binding.tagId ?? binding.path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
+    : binding
+}
+
+/** Refuses a condition a person or AI agent asks to evaluate where any signal it compares is a fault the scenario injects. */
+export const refuseInjectedFaultsIn = (graph: CompiledPlantGraph, condition: unknown): void => {
+  if (Array.isArray(condition)) {
+    for (const entry of condition) refuseInjectedFaultsIn(graph, entry)
+    return
+  }
+  if (condition === null || typeof condition !== 'object') return
+  for (const [key, entry] of Object.entries(condition)) {
+    const reference = key === 'signal' ? processPlantSignalReferenceSchema.safeParse(entry) : undefined
+    if (reference?.success === true) readableProcessPlantSignalBinding(graph, reference.data)
+    else refuseInjectedFaultsIn(graph, entry)
+  }
+}
+
 export const findProcessPlantSignalBinding = (
   graph: CompiledPlantGraph,
   reference: ProcessPlantSignalReference,

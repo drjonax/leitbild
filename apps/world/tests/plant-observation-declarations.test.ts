@@ -28,10 +28,10 @@ const observable = (path: string) => declaration.observables.find(candidate => c
 describe('plant observation declarations (P2)', () => {
   test('T12: every published or recorded signal is declared and parses against core\'s quantity list and unit codes', () => {
     expect(observationDeclarationSchema.parse(declaration)).toEqual(declaration)
-    // 1,102 signals, 81 items' states, 8 rod banks' travel, 6 safety functions and the operating mode.
-    expect(declaration.observables).toHaveLength(1198)
-    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(817)
-    expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:802`)
+    // 1,021 signals (none a fault the scenario injects), 81 items' states, 8 rod banks' travel, 6 safety functions and the operating mode.
+    expect(declaration.observables).toHaveLength(1117)
+    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(796)
+    expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:721`)
   })
 
   test('T12: labels are the unit\'s own, unique within it, and unique per Run once World qualifies them (R25)', () => {
@@ -151,7 +151,7 @@ describe('plant observation declarations (P2)', () => {
 
   test('series come from the Run\'s recording, else null', () => {
     expect(observable('pressurizer.pressureMPa').series).toEqual({ seriesId: recordingSeriesIdFor(objectId, 'pressurizer.pressureMPa'), intervalMs: 1_000 })
-    expect(declaration.observables.filter(entry => entry.series !== null)).toHaveLength(802)
+    expect(declaration.observables.filter(entry => entry.series !== null)).toHaveLength(721)
     expect(plantDeclaration(objectId, plant, null).observables.every(entry => entry.series === null)).toBe(true)
   })
 
@@ -185,13 +185,11 @@ describe('plant observation declarations (P2)', () => {
   })
 })
 
-/** What the PORV declares as an element of its own: its state, its position and demand, its flow, whether it flows, its failure. */
+/** What the PORV declares as an element of its own: its state, its position and demand, its flow and whether it flows; never its injected failure. */
 const RELIEF_VALVE_PATHS: ReadonlyArray<string> = [
   'pressurizer.reliefFlowKgPerS',
   'pressurizer.reliefValve.state',
   'pressurizer.reliefValveEffectivePositionFraction',
-  'pressurizer.reliefValveFailedPositionFraction',
-  'pressurizer.reliefValveFailureActive',
   'pressurizer.reliefValveFlowing',
   'pressurizer.reliefValvePositionFraction',
 ]

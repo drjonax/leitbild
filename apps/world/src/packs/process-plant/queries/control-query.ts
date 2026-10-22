@@ -9,6 +9,7 @@ import { listedControlsFor, listedResetsFor, proposalPortsFor } from '../operati
 import { reviewProposal } from '../operations/proposals.ts'
 import { evaluateProcessPlantIcCondition, processPlantIcConditionSchema } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { refuseInjectedFaultsIn } from '../signals.ts'
 import { requirePlant } from './common.ts'
 import { evaluateProcessPlantProcedureCondition, processPlantProcedureBasisSchema, processPlantProcedureConditionSchema } from '../condition-evidence.ts'
 
@@ -58,11 +59,13 @@ export const answerProcessPlantControlQuery = (config: {
   if (config.request.capabilityId === 'world.process-plant.procedure-condition.evaluate') {
     const payload = procedureConditionEvaluateQuerySchema.parse(config.request.input)
     const plant = requirePlant(config.plants, payload.targetObjectId)
+    refuseInjectedFaultsIn(plant.plant.graph, payload.condition)
     return { targetObjectId: payload.targetObjectId, ...evaluateProcessPlantProcedureCondition({ plant, condition: payload.condition, basis: payload.basis }) }
   }
   if (config.request.capabilityId === 'world.process-plant.conditions.evaluate') {
     const payload = conditionsEvaluateQuerySchema.parse(config.request.input)
     const system = requirePlant(config.plants, payload.plantId)
+    refuseInjectedFaultsIn(system.plant.graph, payload.condition)
     const evaluation = evaluateProcessPlantIcCondition({
       system: system.plant,
       runtime: system.runtime,

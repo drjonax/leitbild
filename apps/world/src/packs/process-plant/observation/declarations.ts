@@ -3,6 +3,7 @@ import type { ObservationDeclaration } from '../../../core/observation/capabilit
 import type { Observable } from '../../../core/observation/model.ts'
 import type { CompiledComponent, ProcessSignalBinding, ProcessUnit } from '../graph/index.ts'
 import { equipmentItemLabel } from '../equipment/items.ts'
+import { isInjectedFault } from '../signals.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
@@ -118,9 +119,9 @@ const deviceVariables = (plant: CompiledProcessPlant): ReadonlyMap<string, strin
 const elementOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string =>
   deviceVariables(plant).get(String(binding.path)) ?? String(binding.path).split('.')[0]!
 
-/** Whether the Plant declares the signal: it publishes it, or the Run records it. */
+/** Whether the Plant declares the signal: it publishes it, or the Run records it; never a fault the scenario injects (isInjectedFault). */
 const declares = (plant: CompiledProcessPlant, recording: PlantRecording, binding: ProcessSignalBinding): boolean =>
-  binding.published || recording?.seriesIds.has(recordingSeriesIdFor(plant.id, binding.path)) === true
+  !isInjectedFault(binding) && (binding.published || recording?.seriesIds.has(recordingSeriesIdFor(plant.id, binding.path)) === true)
 
 /**
  * A count the I&C only steps through (a diesel's load sequencer, R29) is a
