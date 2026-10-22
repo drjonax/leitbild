@@ -107,7 +107,7 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       variable({ path: 'steamMassBalanceResidualKg', label: 'Steam mass balance residual', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg', simulatorOnly: true }),
       variable({ path: 'boilingEnergyResidualMw', label: 'Boiling energy balance residual', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW', simulatorOnly: true }),
       variable({ path: 'tubeLeakFraction', label: 'Tube leak fraction', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', measurand: 'leak', quantity: 'ratio', unit: 'fraction' }),
-      variable({ path: 'primaryToSecondaryLeakKgPerS', label: 'Primary-to-secondary leak flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
+      variable({ path: 'primaryToSecondaryLeakKgPerS', label: 'Primary-to-secondary leak flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true, faultTruth: true }),
       variable({ path: 'secondaryRadiationMSvPerH', label: 'Secondary radiation', kind: 'derived', discipline: 'radiological', writable: false, publish: 'telemetry', quantity: 'radiationDoseRate', unit: 'mSv/h' }),
       // How fast the saturation temperature of its pressure moves: its pressure's trend, which natural circulation
       // checks stable or falling. Declared last, so the variables before it keep their places.

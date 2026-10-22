@@ -12,6 +12,7 @@ import {
   recordedPlantVariables,
 } from '../src/packs/process-plant/index.ts'
 import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
+import { proposalPortsFor } from '../src/packs/process-plant/operations/instance-ports.ts'
 import { createPlantOperations } from '../src/packs/process-plant/operations/plant-operations.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -22,7 +23,9 @@ guardPlantTests()
 // size) is the instructor's knob, never a reading: no person or AI agent
 // searches, reads, evaluates, records or is shown it, so a training scenario's
 // fault shows only through what the Plant does. The instructor's action still
-// injects it. A boundary (the grid's frequency) stays a reading.
+// injects it. A boundary (the grid's frequency) stays a reading. So is the
+// model's truth about a fault (a leak's flow, a tube leak's flow: faultTruth),
+// which no control room measures: the fault shows by its symptoms.
 
 const PLANT_ID = 'plant:injected-faults'
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: PLANT_ID, loopCount: 4 }))
@@ -103,5 +106,69 @@ describe('a fault the scenario injects is no reading', () => {
     const ask = askOf(system)
     const read = ask('world.process-plant.signals.read', { plantId: PLANT_ID, signals: [{ path: 'pressurizer.reliefFlowKgPerS' }] }) as { readonly signals: ReadonlyArray<{ readonly variable: { readonly value: number } }> }
     expect(read.signals[0]!.variable.value).toBeGreaterThan(1)
+  })
+})
+
+describe('the model\'s truth about an injected fault is no reading', () => {
+  const truths = plant.graph.signalBindings.filter(binding => binding.faultTruth === true)
+  const truthPaths = new Set(truths.map(binding => String(binding.path)))
+  const leaking = (): ProcessPlantRuntimeInstance => {
+    const system = instance()
+    for (const command of commandsForProcessPlantAction({ actionId: 'steam-generator-tube-leak-a', parameters: { leakPercent: 4 }, graph: plant.graph })) {
+      system.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    for (let second = 0; second < 30; second += 1) system.runtime.tick(1_000)
+    return system
+  }
+
+  test('the leak flows of the vessel, each steam generator and each primary line are fault truths, and injected faults', () => {
+    expect([...truthPaths]).toEqual(expect.arrayContaining(['vessel.primaryLeakFlowKgPerS', 'vessel.tubeLeakFlowKgPerS', 'sgA.primaryToSecondaryLeakKgPerS', 'sgD.primaryToSecondaryLeakKgPerS', 'rcs-hot-leg-a.leakFlowKgPerS', 'pressurizer-surge-line.leakFlowKgPerS']))
+    expect(truths.every(binding => isInjectedFault(binding) && binding.actuation === undefined)).toBe(true)
+    // The I&C's RCS leak rate comes from the inventory balance, as a control room's does: a symptom, and a reading.
+    const leakRate = plant.graph.signalBindingByTagId.get('RCS-LEAK-RATE' as never)!
+    expect(isInjectedFault(leakRate)).toBe(false)
+    expect(leakRate.published).toBe(true)
+  })
+
+  test('with a tube leak injected, no search, read, condition, declaration, recording or diagnostics gives its flow away', () => {
+    const system = leaking()
+    expect(system.runtime.readVariable('sgA.primaryToSecondaryLeakKgPerS' as never)).toBeGreaterThan(0)
+    expect(system.runtime.pwrTransientDiagnostics().primary.tubeLeakFlowKgPerS).toBeGreaterThan(0)
+    const ask = askOf(system)
+    const signals = (ask('world.process-plant.signals.search', { plantId: PLANT_ID, limit: 500, text: 'leak flow' }) as { readonly signals: ReadonlyArray<{ readonly signal: { readonly path: string } }> }).signals
+    expect(signals.filter(entry => truthPaths.has(entry.signal.path))).toEqual([])
+    const variables = (ask('world.process-plant.variables.search', { plantId: PLANT_ID, limit: 500, text: 'leak' }) as { readonly variables: ReadonlyArray<{ readonly variable: { readonly path: string } }> }).variables
+    expect(variables.filter(entry => truthPaths.has(entry.variable.path))).toEqual([])
+    for (const path of ['sgA.primaryToSecondaryLeakKgPerS', 'vessel.tubeLeakFlowKgPerS', 'rcs-hot-leg-a.leakFlowKgPerS']) {
+      for (const capabilityId of ['world.process-plant.signals.resolve', 'world.process-plant.signals.read']) {
+        expect(() => ask(capabilityId, { plantId: PLANT_ID, signals: [{ path }] })).toThrow(`${path} is the model's truth about an injected fault, not a reading`)
+      }
+      expect(() => ask('world.process-plant.variables.read', { plantId: PLANT_ID, paths: [path] })).toThrow(`${path} is the model's truth about an injected fault, not a reading`)
+      expect(() => ask('world.process-plant.conditions.evaluate', { plantId: PLANT_ID, condition: { type: 'comparison', signal: { path }, operator: '>', value: 0 } })).toThrow('is the model\'s truth about an injected fault')
+    }
+    const diagnostics = ask('world.process-plant.transient.diagnostics', { plantId: PLANT_ID }) as { readonly diagnostics: { readonly primary: Record<string, unknown> } }
+    expect(Object.keys(diagnostics.diagnostics.primary)).not.toContain('leakFlowKgPerS')
+    expect(Object.keys(diagnostics.diagnostics.primary)).not.toContain('tubeLeakFlowKgPerS')
+    expect(JSON.stringify(diagnostics)).not.toMatch(/leakFlow/i)
+    const recordedEverything = { seriesIds: new Set(plant.graph.signalBindings.map(binding => recordingSeriesIdFor(plant.id, binding.path))), intervalMs: 1_000 }
+    const declared = plantDeclaration(PLANT_ID as never, plant, recordedEverything).observables.map(observable => observable.ref.slice(PLANT_ID.length + 1))
+    expect(declared.filter(path => truthPaths.has(path))).toEqual([])
+    for (const profile of ['operations', 'engineering']) expect(recordedPlantVariables(plant, profile).filter(variable => truthPaths.has(String(variable.path)))).toEqual([])
+  })
+
+  test('the leak shows by its symptoms: secondary radiation and the RCS leak rate stay readings and rise', () => {
+    const ask = askOf(leaking())
+    const read = ask('world.process-plant.signals.read', { plantId: PLANT_ID, signals: [{ tagId: 'SG-A-N16' }, { tagId: 'RCS-LEAK-RATE' }] }) as { readonly signals: ReadonlyArray<{ readonly variable: { readonly value: number } }> }
+    expect(read.signals[0]!.variable.value).toBeGreaterThan(0.02)
+    expect(read.signals[1]!.variable.value).toBeGreaterThan(0)
+  })
+
+  test('a proposal cites no injected fault, even one a Plant tags', () => {
+    const system = instance()
+    const truth = truths.find(binding => String(binding.path) === 'vessel.tubeLeakFlowKgPerS')!
+    const tagged = { ...system, plant: { ...plant, graph: { ...plant.graph, signalBindingByTagId: new Map([...plant.graph.signalBindingByTagId, ['RCS-TUBE-LEAK' as never, { ...truth, tagId: 'RCS-TUBE-LEAK' as never }]]) } } } as ProcessPlantRuntimeInstance
+    const ports = proposalPortsFor(tagged, undefined)
+    expect(ports.reading('RCS-TUBE-LEAK' as never)).toEqual({ ok: false, reason: 'RCS-TUBE-LEAK is an injected fault, not a reading: no person or AI agent cites it' })
+    expect(ports.reading('RCS-LEAK-RATE' as never).ok).toBe(true)
   })
 })

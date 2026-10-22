@@ -52,13 +52,16 @@ export const resolveProcessPlantSignalBinding = (
 
 /**
  * A fault the scenario injects (a valve's failure, a leak's area) is the
- * instructor's knob, never a reading: no person or AI agent searches, reads,
- * evaluates, records or is shown it, so none can tell an injected fault from
- * what the Plant does. Instructor actions and the Scenario set it through
- * their own path. A boundary (the grid's frequency) is a condition outside
- * the Plant that its instruments read, and stays a reading.
+ * instructor's knob, never a reading, and so is the model's truth about it
+ * (a leak's flow, a tube leak's flow: faultTruth), which no control room
+ * measures: no person or AI agent searches, reads, evaluates, records or is
+ * shown either, so the fault shows only through its symptoms. Instructor
+ * actions and the Scenario set it through their own path. A boundary (the
+ * grid's frequency) is a condition outside the Plant that its instruments
+ * read, and stays a reading.
  */
-export const isInjectedFault = (binding: Pick<ProcessSignalBinding, 'actuation'>): boolean => binding.actuation === 'faultInjection'
+export const isInjectedFault = (binding: Pick<ProcessSignalBinding, 'actuation' | 'faultTruth'>): boolean =>
+  binding.actuation === 'faultInjection' || binding.faultTruth === true
 
 /** A signal as a person or AI agent reads it: refused, with why, where it is a fault the scenario injects. */
 export const readableProcessPlantSignalBinding = (
@@ -66,9 +69,10 @@ export const readableProcessPlantSignalBinding = (
   reference: ProcessPlantSignalReference,
 ): ProcessSignalBinding => {
   const binding = resolveProcessPlantSignalBinding(graph, reference)
-  return isInjectedFault(binding)
-    ? rejectCapabilityTarget(`${binding.tagId ?? binding.path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
-    : binding
+  if (!isInjectedFault(binding)) return binding
+  return rejectCapabilityTarget(binding.faultTruth === true
+    ? `${binding.tagId ?? binding.path} is the model's truth about an injected fault, not a reading: no person or AI agent reads it`
+    : `${binding.tagId ?? binding.path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
 }
 
 /** Refuses a condition a person or AI agent asks to evaluate where any signal it compares is a fault the scenario injects. */
