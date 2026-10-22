@@ -11,7 +11,8 @@
 // An item takes OpenBridge's alert frame at the worst priority of its bound
 // readings and of the active alerts on its element the sample carries. A
 // reading that is missing, bad or stale, or a frozen sample, reads as
-// unknown: a static device or tank, a dashed pipe; never as off or empty.
+// unknown: a static device or tank, a dashed pipe; never as off or empty. One
+// outside its declared validity draws as unknown and writes "—".
 import type { Segment } from '@oicl/connector-diagram'
 import type { Observation } from '../../../core/observation/model.ts'
 import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
@@ -95,10 +96,16 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
   const byId = new Map(section.nodes.map(node => [node.id, node]))
   const viewEdges = new Map(section.edges.map(edge => [edge.id, edge]))
   const observed = new Map(observations.map(observation => [observation.ref, observation]))
-  // A reading the drawing can use: none while the sample is frozen, or where it is missing, bad or stale.
+  // A reading the drawing can draw from: none while the sample is frozen, or where it is missing, bad, stale, or
+  // outside the validity its observable declares (not-applicable).
   const usable = (binding: TopologyBinding): Observation | null => {
     const observation = observed.get(binding.ref)
-    return frozen || observation === undefined || observation.value === null || observation.quality === 'bad' || observation.quality === 'stale' ? null : observation
+    return frozen || observation === undefined || observation.value === null || ['bad', 'stale', 'not-applicable'].includes(observation.quality) ? null : observation
+  }
+  // What its text writes: a reading outside its validity reads "—", one not known "?" (stale included, as the drawing reads it).
+  const shownReading = (binding: TopologyBinding): Observation | undefined => {
+    const observation = frozen ? undefined : observed.get(binding.ref)
+    return observation?.quality === 'stale' ? undefined : observation
   }
   const percent = (binding: TopologyBinding): number | null => {
     const value = usable(binding)?.value
@@ -177,7 +184,7 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     // kept room for, in their order, an empty one left out.
     const counted = members.length > 1 ? members.map(stateOf) : []
     const role = members[0]!.bindings.some(binding => binding.role === 'running') ? 'RUN' : 'ON'
-    const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, usable(binding) ?? undefined))
+    const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, shownReading(binding)))
     const written = itemText(view.bindings)
     const stateBinding = view.bindings.find(binding => binding.ref === written.state)
     const sized: ReadonlyArray<FlowLine> = members.length > 1

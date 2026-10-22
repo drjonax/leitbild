@@ -191,6 +191,9 @@ describe('flow symbols', () => {
     expect(words([observation('unit:x#runA', 'off')])).toEqual(['name:Mover A', 'word:STOP'])
     expect(words([observation('unit:x#runA', 'on')])).toEqual(['name:Mover A', 'word:RUN'])
     expect(words([observation('unit:x#runA', 'on', 'bad')])).toEqual(['name:Mover A', 'word:?'])
+    // Outside the validity its observable declares, a state reads "—" and draws as not known.
+    expect(words([observation('unit:x#runA', null, 'not-applicable')])).toEqual(['name:Mover A', 'word:—'])
+    expect(flowDrawing(lone, [observation('unit:x#runA', null, 'not-applicable')], [], false).devices.find(device => device.id === 'mover')!.unknown).toBe(true)
   })
 
   test('an active alert on an item\'s element frames it at its priority; a returned one, or one on another object, does not', () => {
@@ -209,6 +212,10 @@ describe('flow symbols', () => {
     expect(stale.devices.map(device => [device.id, device.unknown])).toEqual([['mover', true], ['valve', true]])
     expect(stale.texts[1]!.lines[1]!.text).toBe('RUN ?/2')
     expect(stale.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'empty')).toBe(true)
+    // A reading outside its declared validity writes "—", never its value.
+    const invalid = flowDrawing(section, [observation('unit:x#level', 62, 'not-applicable')], [], false)
+    expect(invalid.texts[0]!.lines.map(line => line.text)).toEqual(['Tank', '—'])
+    expect(invalid.vessels[0]).toMatchObject({ level: null, unknown: true })
     const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)
     expect(frozen.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'closed-dash')).toBe(true)

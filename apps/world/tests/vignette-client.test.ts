@@ -22,12 +22,14 @@ const harness = (presence: (at: string) => RunPresence | null) => {
   const calls: string[] = []
   /** How long the Run takes to answer a sample, on the fake clock. */
   let latencyMs = 0
+  /** The quality the level reads with. */
+  let quality: VignetteSample['observations'][number]['quality'] = 'good'
   const later = <T>(value: () => T): Promise<T> => latencyMs === 0 ? Promise.resolve(value())
     : new Promise(resolve => { timers.push({ at: wall + latencyMs, run: () => resolve(value()), cancelled: false }) })
   const snapshots: VignetteSnapshot[] = []
   const sample = (history?: { readonly fromMs: number }): VignetteSample => ({
     at: { at: new Date(runMs).toISOString(), clock: 'simulation', paused: false },
-    observations: [{ ref: 'unit-1#level', at: new Date(runMs).toISOString(), clock: 'simulation', value: 40 + (runMs % 10_000) / 1_000, quality: 'good', priority: 'none' }],
+    observations: [{ ref: 'unit-1#level', at: new Date(runMs).toISOString(), clock: 'simulation', value: 40 + (runMs % 10_000) / 1_000, quality, priority: 'none' }],
     alerts: [], entities: {}, slots: {}, maps: {},
     ...(history === undefined ? {} : { series: { 'unit-1.level': [{ t: history.fromMs + 1_000, v: 30 }] } }),
   })
@@ -65,7 +67,7 @@ const harness = (presence: (at: string) => RunPresence | null) => {
   }
   return {
     session, calls, snapshots, settle, advance, pending: () => timers.filter(timer => !timer.cancelled).length, last: () => snapshots.at(-1)!,
-    wall: () => wall, answerIn: (ms: number) => { latencyMs = ms },
+    wall: () => wall, answerIn: (ms: number) => { latencyMs = ms }, readsAs: (next: typeof quality) => { quality = next },
   }
 }
 
@@ -144,6 +146,25 @@ describe('vignette session', () => {
     const answeredAt = run.last().lastSampleWallMs!
     expect(staleAt! - answeredAt).toBeGreaterThan(STALE_AFTER_MS)
     expect(staleAt! - answeredAt).toBeLessThanOrEqual(STALE_AFTER_MS + 100)
+    run.session.close()
+  })
+
+  test('a reading outside its declared validity, or bad, adds no point to its trace: the trace breaks there', async () => {
+    const run = harness(loaded)
+    run.session.start()
+    await run.settle()
+    await run.advance(3_000)
+    const points = () => run.last().series.get('unit-1#level')?.length ?? 0
+    const before = points()
+    run.readsAs('not-applicable')
+    await run.advance(3_000)
+    expect(points()).toBe(before)
+    run.readsAs('bad')
+    await run.advance(2_000)
+    expect(points()).toBe(before)
+    run.readsAs('good')
+    await run.advance(2_000)
+    expect(points()).toBeGreaterThan(before)
     run.session.close()
   })
 

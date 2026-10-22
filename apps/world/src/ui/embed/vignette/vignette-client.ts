@@ -107,7 +107,9 @@ export const createVignetteSession = (config: {
     const series = new Map(withHistory ? [] : snapshot.series)
     for (const pen of pensOf(view)) {
       const recorded = withHistory ? sample.series?.[pen.seriesId] ?? [] : series.get(pen.ref) ?? []
-      const value = sample.observations.find(observation => observation.ref === pen.ref)?.value
+      // A reading that is bad or outside its declared validity measures nothing: no point, so the trace breaks there.
+      const observation = sample.observations.find(entry => entry.ref === pen.ref)
+      const value = observation?.quality === 'bad' || observation?.quality === 'not-applicable' ? undefined : observation?.value
       series.set(pen.ref, typeof value === 'number' ? appendPoint(recorded, { t: at, v: value }, at - pen.horizonMs) : recorded)
     }
     update({ phase: 'live', view, latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
