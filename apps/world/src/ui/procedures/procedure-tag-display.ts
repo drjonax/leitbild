@@ -1,6 +1,5 @@
-import { embeddedViewEnvelopeSchema, embeddedViewFragment, embeddedViewPath, type EmbeddedViewEnvelope } from '@leitbild/contracts'
-import type { ProcedureTag, SimulationRunId } from '../../core/model/index.ts'
-import { workspaceApiPath } from '../workspace-context.ts'
+import { embeddedViewFragment, embeddedViewPath, type EmbeddedViewEnvelope } from '@leitbild/contracts'
+import type { ProcedureTag } from '../../core/model/index.ts'
 import type { ProcedureTagValidation, ProcedureTagValue } from './procedure-client.ts'
 
 // What a clicked procedure tag's dialog shows, decided before anything is
@@ -20,38 +19,6 @@ export const procedureTagDisplayPlan = (scopeId: string, tagId: string, validati
   const path = validation.signal?.path
   return { kind: 'display', subject: `${scopeId}#${typeof path === 'string' ? path : tagId}` }
 }
-
-/** What World composes as a subject's default display: the embedded view to frame. */
-export interface ProcedureTagView {
-  readonly viewType: string
-  readonly title: string
-  readonly height: number
-  readonly state: string
-}
-
-/** World's default display of a subject, as the person reads it (POST displays/default); a refusal throws with World's words. */
-export const readDefaultDisplay = async (simulationRunId: SimulationRunId, subject: string): Promise<ProcedureTagView> => {
-  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/displays/default`), {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject }),
-  })
-  const body = await response.json() as { readonly result?: { readonly view: ProcedureTagView }; readonly error?: { readonly message?: string } }
-  if (!response.ok || body.result === undefined) throw new Error(body.error?.message ?? `World answered HTTP ${response.status}`)
-  return body.result.view
-}
-
-/** The display's embedded view, framed read-only: the Run is its subject, as for a display shown below an agent's answer. */
-export const procedureTagDisplayEnvelope = (config: {
-  readonly workspaceId: string
-  readonly simulationRunId: SimulationRunId
-  readonly view: ProcedureTagView
-}): EmbeddedViewEnvelope => embeddedViewEnvelopeSchema.parse({
-  moduleId: 'world',
-  subject: { workspaceId: config.workspaceId, moduleId: 'world', type: 'world.simulation-run', id: config.simulationRunId },
-  viewType: config.view.viewType,
-  title: config.view.title,
-  height: config.view.height,
-  state: config.view.state,
-})
 
 export const procedureTagDisplaySource = (envelope: EmbeddedViewEnvelope): string =>
   `${embeddedViewPath(envelope)}${embeddedViewFragment(envelope)}`

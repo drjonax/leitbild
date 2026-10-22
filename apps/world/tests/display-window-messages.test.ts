@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { COMPOSED_DISPLAY_VIEW_TYPE } from '../src/packs/process-plant/displays/composition.ts'
 import { answerDeckEntry } from '../src/ui/process-display/display-deck.ts'
 import {
   listingRefusal,
-  PROCESS_DISPLAY_VIEW_TYPE,
   readDisplayWindowHostMessage,
   VIGNETTE_VIEW_TYPE,
 } from '../src/ui/process-display/display-window-messages.ts'
@@ -17,11 +15,11 @@ const view = (overrides: Record<string, unknown> = {}, key = 'room/turn/call/key
   caption: 'Answer 14:02:31',
   envelope: {
     moduleId: 'world',
-    viewType: 'process-plant.display',
+    viewType: 'display.vignette',
     subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-1' },
     title: 'SG B level',
     height: 600,
-    state: '{"composition":{}}',
+    state: '{"title":"SG B level","at":{},"views":[]}',
     ...overrides,
   },
 })
@@ -29,10 +27,6 @@ const view = (overrides: Record<string, unknown> = {}, key = 'room/turn/call/key
 const fromHost = (data: unknown) => ({ origin: expected.origin, source: parent, data })
 
 describe('display window messages from the Host', () => {
-  test('names the Pack view type it accepts', () => {
-    expect(PROCESS_DISPLAY_VIEW_TYPE).toBe(COMPOSED_DISPLAY_VIEW_TYPE)
-  })
-
   test('accepts the conversation list and open requests from the Host only', () => {
     expect(readDisplayWindowHostMessage(fromHost({ type: 'leitbild:views', views: [view()] }), expected)).toMatchObject({ kind: 'views', views: [{ key: 'room/turn/call/key' }], refused: [] })
     expect(readDisplayWindowHostMessage(fromHost({ type: 'leitbild:view-open', view: view() }), expected)).toMatchObject({ kind: 'open', view: { caption: 'Answer 14:02:31' } })
@@ -73,11 +67,9 @@ describe('display window messages from the Host', () => {
     expect(answerDeckEntry('run-1', vignette as never)).toMatchObject({ source: 'answer', title: 'Halden frequency', kind: 'advice', refusal: null, otherRun: false })
   })
 
-  test('shows World process displays about a Run and says why it shows nothing else', () => {
+  test('shows nothing but vignettes, and says so: the plant\'s own process display went at the swap', () => {
     const envelope = view().envelope
-    expect(listingRefusal(envelope as never)).toBeNull()
     expect(listingRefusal({ ...envelope, viewType: 'electric-grid.display' } as never)).toBe('it is a electric-grid.display view, which this window does not show')
-    expect(listingRefusal({ ...envelope, moduleId: 'agents' } as never)).toBe('it is a process-plant.display view published by agents, not by World')
-    expect(listingRefusal({ ...envelope, subject: { ...envelope.subject, type: 'world.scenario' } } as never)).toBe('it is about a world.scenario, not a Simulation Run')
+    expect(listingRefusal({ ...envelope, viewType: 'process-plant.display' } as never)).toBe('it is a process-plant.display view, which this window does not show')
   })
 })

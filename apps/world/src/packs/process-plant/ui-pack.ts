@@ -43,6 +43,10 @@ export const processPlantPackView = {
     assessmentsQuery: (plantId, assessmentIds) => ({
       capabilityId: 'world.process-plant.assessments.evaluate', input: { plantId, assessmentIds },
     }),
-    // The equipment the tag is measured on, opened as from a unit overview: World draws what feeds it and where its outflow goes.
+  },
+  ui: {
+    surfacePanels: [],
+    // The display window's header, for a Plant's display: pending proposals, the operations log, the Instructor's actions.
+    windowTools: async () => await import('./ui/displays/WindowTools.svelte'),
   },
 } satisfies WorldPackView

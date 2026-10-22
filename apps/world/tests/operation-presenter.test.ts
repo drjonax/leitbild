@@ -30,7 +30,6 @@ import {
   operationsLogRows,
   pendingProposals,
   proposalCard,
-  reviewOpens,
   shownProposal,
   type ListedItem,
   type OperationNow,
@@ -472,19 +471,6 @@ describe('C2a: protection pushbuttons, who acted, consequence lines and the revi
     expect(proposalCard(open.book.proposals[0]!, null, block, plant.now()).already).toBe('Already OPEN: approving it changes nothing')
     expect(proposalCard(stored, null, block, plant.now()).already).toBeNull()
   })
-
-  test('a review opens a detail around a bundled valve\'s host, then around the host and the line it sits on', () => {
-    const plant = unit()
-    plant.step()
-    const blockValve = plant.tag('MOV-8000A')
-    const item = plant.listed(plant.itemOffering(blockValve.path))
-    const opens = reviewOpens(item)
-    expect(opens).toHaveLength(2)
-    expect(opens[1]!.slice(0, 1)).toEqual([...opens[0]!])
-    // A component's own detail draws it: one detail to open.
-    const pump = plant.listed(plant.itemOffering(plant.tag('RCP-A-RUN').path))
-    expect(reviewOpens(pump)).toEqual([pump.components])
-  }, PLANT_HANG_GUARD_MS)
 
   test('after a trip the AFW valve is throttled no lower than its actuation\'s floor, with its basis; a setting below it is not offered, one above reads what it throttles', () => {
     const plant = unit()

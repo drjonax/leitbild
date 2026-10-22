@@ -332,7 +332,7 @@ const OVERVIEW_ZOOM_LIMIT = 200
 const ANSWER_ZOOM_STORAGE_KEY = 'leitbild.processDisplayAnswerZoom.v2'
 const ANSWER_ZOOM_LIMIT = 100
 
-/** Unit overview zoom outlives the session, per Run and Plant. */
+/** An asset's default display keeps its zoom beyond the session, per Run and asset. */
 export const overviewZoomStore = (
   storage: StorageLike | null = typeof localStorage === 'undefined' ? null : localStorage,
 ): DisplayZoomStore => createDisplayZoomStore({ storageKey: OVERVIEW_ZOOM_STORAGE_KEY, limit: OVERVIEW_ZOOM_LIMIT, storage })
@@ -342,4 +342,4 @@ export const answerZoomStore = (
   storage: StorageLike | null = typeof sessionStorage === 'undefined' ? null : sessionStorage,
 ): DisplayZoomStore => createDisplayZoomStore({ storageKey: ANSWER_ZOOM_STORAGE_KEY, limit: ANSWER_ZOOM_LIMIT, storage })
 
-export const overviewZoomKey = (simulationRunId: string, plantId: string): string => `${simulationRunId}:${plantId}`
+export const overviewZoomKey = (simulationRunId: string, objectId: string): string => `${simulationRunId}:${objectId}`

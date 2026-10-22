@@ -3,7 +3,7 @@
   import { Play, X } from 'lucide-svelte'
   import type { SimulationRunId } from '../../../../../core/model/index.ts'
   import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
-  import { readProcessPlantCatalog, type ProcessPlantActionCatalogEntry } from '../../../../../ui/process-display/process-display-client.ts'
+  import { readProcessPlantCatalog, type ProcessPlantActionCatalogEntry } from '../../plant-client.ts'
   import type { WindowPlant } from './window-operations.ts'
 
   // The instructor's actions on one Plant: the Pack's scenario and fault

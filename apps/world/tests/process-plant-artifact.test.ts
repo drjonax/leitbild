@@ -9,7 +9,7 @@ import { processPlantCapabilities } from '../src/packs/process-plant/capabilitie
 import { PROCESS_PLANT_SEARCH_DEFAULT_LIMIT } from '../src/packs/process-plant/queries/common.ts'
 import { artifactReadQuerySchema } from '../src/packs/process-plant/queries/graph-query.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
-import { readProcessPlantArtifact, type ProcessPlantArtifact } from '../src/ui/process-display/process-display-client.ts'
+import { readProcessPlantArtifact, type ProcessPlantArtifact } from '../src/packs/process-plant/ui/plant-client.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()

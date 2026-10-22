@@ -1,4 +1,5 @@
 import type { SimulationRunId } from '../../../../../core/model/index.ts'
+import { querySimulationRunCapability } from '../../../../../ui/simulation-run-client.ts'
 import type { ProcessPlantProposal } from '../../../operations/proposals.ts'
 import { operationClient } from '../operation/operation-client.ts'
 import {
@@ -10,18 +11,27 @@ import {
   type ProposalListEntry,
 } from '../operation/operation-presenter.ts'
 
-// What the display window reads of operation, for the Plant it shows: the
-// Plant's pending proposals for its toolbar's chip, and the operations log
-// view (plan §4.3) while it is open. Read through the Run's capabilities as
-// the window's own person: control.proposals for the proposals,
-// controls.list for the words of what they move, signals.read for the Plant
-// now and the commands and resets on the controls' paths.
+// What the Plant's tools in the display window's header read, for the Plant
+// whose display the window shows: its name (plants.list), its pending
+// proposals for the chip, and the operations log view (plan §4.3) while it is
+// open. Read through the Run's capabilities as the window's own person:
+// control.proposals for the proposals, controls.list for the words of what
+// they move, signals.read for the Plant now and the commands and resets on
+// the controls' paths.
 
 /** The Plant a window's dialog acts on, fixed when it opens. */
 export interface WindowPlant {
   readonly objectId: string
   readonly plantId: string
   readonly label: string
+}
+
+/** The Plant as its dialogs name it, from the Run's Plants. */
+export const readWindowPlant = async (runId: SimulationRunId, plantId: string): Promise<WindowPlant> => {
+  const listed = await querySimulationRunCapability<{ readonly plants: ReadonlyArray<{ readonly id: string; readonly label: string }> }>(runId, 'world.process-plant.plants.list', {})
+  const plant = listed.plants.find(entry => entry.id === plantId)
+  if (plant === undefined) throw new Error(`${plantId} is not a Plant of this Run`)
+  return { objectId: plantId, plantId, label: plant.label }
 }
 
 const controlPaths = (items: ReadonlyArray<ListedItem>): ReadonlyArray<string> =>

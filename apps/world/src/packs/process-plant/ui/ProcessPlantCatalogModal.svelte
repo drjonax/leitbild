@@ -6,7 +6,7 @@
     type ProcessPlantCatalog,
     type ProcessPlantCatalogEntry,
     type ProcessPlantActionCatalogEntry,
-  } from '../../../ui/process-display/process-display-client.ts'
+  } from './plant-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId

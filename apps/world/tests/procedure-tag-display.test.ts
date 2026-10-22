@@ -5,11 +5,11 @@ import type { ProcedureTagValidation, ProcedureTagValue } from '../src/ui/proced
 import {
   procedureTagBindingLine,
   procedureTagDeclared,
-  procedureTagDisplayEnvelope,
   procedureTagDisplayPlan,
   procedureTagDisplaySource,
   procedureTagReadingText,
 } from '../src/ui/procedures/procedure-tag-display.ts'
+import { defaultDisplayEnvelope } from '../src/ui/process-display/default-display.ts'
 
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
 const runId = 'run-test' as SimulationRunId
@@ -37,7 +37,7 @@ describe("a clicked procedure tag's display", () => {
 
   test('frames the composed view as a read-only embedded view of the Run, at the height World gave it', () => {
     const view = { viewType: 'display.vignette', title: 'PT-455', height: 480, state: '{"title":"PT-455"}' }
-    const envelope = procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, view })
+    const envelope = defaultDisplayEnvelope({ workspaceId, simulationRunId: runId, view })
     expect(JSON.parse(JSON.stringify(envelope))).toEqual({
       moduleId: 'world',
       subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: runId },
@@ -47,7 +47,7 @@ describe("a clicked procedure tag's display", () => {
       state: view.state,
     })
     expect(procedureTagDisplaySource(envelope)).toBe(`/workspaces/${workspaceId}/world/embed/display.vignette${embeddedViewFragment(envelope)}`)
-    expect(() => procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, view: { ...view, title: 'x'.repeat(121) } })).toThrow()
+    expect(() => defaultDisplayEnvelope({ workspaceId, simulationRunId: runId, view: { ...view, title: 'x'.repeat(121) } })).toThrow()
   })
 
   test("writes the tag's binding and every warning on it in one line", () => {

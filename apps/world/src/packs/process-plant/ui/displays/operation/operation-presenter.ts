@@ -708,22 +708,10 @@ export const shownProposal = (itemId: string, proposals: ReadonlyArray<ProcessPl
 export interface ProposalListEntry {
   readonly id: string
   readonly item: string
-  /** The details that may draw the item on its own symbol, in the order the window tries them (reviewOpens). */
-  readonly opens: ReadonlyArray<ReadonlyArray<string>>
   readonly action: string
   readonly proposer: 'AI' | 'OP'
   readonly text: string
 }
-
-/**
- * The details a review may open to draw a proposal's item on its own symbol,
- * the card pinned on it (HMI review of run 26c, g2): its own detail first;
- * for a device its host bundles, then the detail around the host and the line
- * the device sits on, which draws the line and the device on it where the
- * host's own detail has room only for the host.
- */
-export const reviewOpens = (item: Pick<ListedItem, 'components' | 'line'>): ReadonlyArray<ReadonlyArray<string>> =>
-  item.line === undefined ? [item.components] : [item.components, [...new Set([...item.components, ...item.line])]]
 
 /**
  * The window's list of pending proposals (plan §4.3, QA-10): the one that
@@ -743,7 +731,6 @@ export const pendingProposals = (
     return {
       id: proposal.id,
       item: proposal.item,
-      opens: reviewOpens(item),
       action: card.action,
       proposer: proposal.proposer.origin === 'ai' ? 'AI' as const : 'OP' as const,
       text: `${card.action} · expires ${card.expires!.at}`,

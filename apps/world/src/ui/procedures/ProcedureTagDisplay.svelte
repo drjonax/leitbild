@@ -9,12 +9,11 @@
   import {
     procedureTagBindingLine,
     procedureTagDeclared,
-    procedureTagDisplayEnvelope,
     procedureTagDisplayPlan,
     procedureTagDisplaySource,
     procedureTagReadingText,
-    readDefaultDisplay,
   } from './procedure-tag-display.ts'
+  import { defaultDisplayEnvelope, readDefaultDisplay } from '../process-display/default-display.ts'
 
   // A clicked procedure tag: World's live default display of the tag on its
   // unit, framed read-only over the procedure, with the tag's reading above
@@ -63,7 +62,7 @@
   // Composed first: a display World cannot compose is refused with its reason, never framed empty.
   const draw = async (key: string, subject: string): Promise<void> => {
     try {
-      const envelope = procedureTagDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId, view: await readDefaultDisplay(simulationRunId, subject) })
+      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId, view: await readDefaultDisplay(simulationRunId, subject) })
       if (!disposed && drawn?.key === key) drawn = { key, phase: { kind: 'shown', envelope, source: procedureTagDisplaySource(envelope) } }
     } catch (error) {
       if (!disposed && drawn?.key === key) drawn = { key, phase: { kind: 'refused', reason: messageOf(error) } }

@@ -217,7 +217,7 @@
       <ChevronRight size={14} class="plant-card-chevron" />
     </button>
     {#if instructorOffered}
-      <button type="button" class="plant-card-row" onclick={() => act('instructor')} title="Instructor actions: start a scenario event or a fault on this unit">
+      <button type="button" class="plant-card-row" onclick={() => act('instructor')} title="Opens this unit's display, whose Instructor menu starts a scenario event or a fault on it">
         <Zap size={18} strokeWidth={1.8} />
         <span class="plant-card-label">Instructor</span>
         <span class="plant-card-state muted">Inject a fault or event</span>

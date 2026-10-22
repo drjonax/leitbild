@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte'
+  import { tick, untrack, type Component } from 'svelte'
   import {
     Check,
     ChevronDown,
@@ -7,32 +7,22 @@
     ChevronRight,
     ClipboardList,
     Ellipsis,
-    History,
     Maximize2,
     Minimize2,
     Minus,
     Plus,
     X,
-    Zap,
   } from 'lucide-svelte'
   import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
+  import type { PackWindowToolsProps } from '../../core/packs/protocol.ts'
   import type { MapFocusTarget } from '../map-runtime/types.ts'
-  import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
-  import { detailDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
-  import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
-  import type { CompiledComposedDisplay } from '../../packs/process-plant/displays/compose.ts'
-  import OperationsLogDialog from '../../packs/process-plant/ui/displays/window/OperationsLogDialog.svelte'
-  import PlantActionsDialog from '../../packs/process-plant/ui/displays/window/PlantActionsDialog.svelte'
-  import ProposalsChip from '../../packs/process-plant/ui/displays/window/ProposalsChip.svelte'
-  import { readPendingProposals } from '../../packs/process-plant/ui/displays/window/window-operations.ts'
-  import type { ProposalListEntry } from '../../packs/process-plant/ui/displays/operation/operation-presenter.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
   import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
+  import { loadUiPack } from '../pack-loader.ts'
   import ProcedureRunBadges from '../procedures/ProcedureRunBadges.svelte'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../procedures/procedure-run-selectors.ts'
-  import { invokeSimulationRunCapability } from '../simulation-run-client.ts'
   import { statusToneColor } from '../status-presentation.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import {
@@ -40,11 +30,13 @@
     normalizeFloatingWindowBounds,
     type FloatingWindowDragMode,
   } from '../window-bounds.ts'
+  import { activeWorkspaceId } from '../workspace-context.ts'
   import DisplayFrame from './DisplayFrame.svelte'
+  import { defaultDisplayEnvelope, readDefaultDisplay } from './default-display.ts'
   import {
     acknowledgeShown,
     buildDisplayDeck,
-    deckEntryPlant,
+    deckEntryAsset,
     mountedDeckEntries,
     newDisplayAnnouncement,
     observeConversation,
@@ -55,14 +47,14 @@
     steppedDeckEntry,
     touchMountedFrames,
     unseenListings,
+    type AssetDeckEntry,
     type DeckAcknowledgement,
+    type DeckAsset,
     type DeckEntry,
-    type DeckPlant,
     type DeckRunJoin,
     type DeckStep,
     type DisplayWindowRequest,
     type MountedDeckFrame,
-    type OverviewDeckEntry,
     type ShownDeckEntry,
   } from './display-deck.ts'
   import {
@@ -85,30 +77,33 @@
     type StoredDisplayZoom,
   } from './display-zoom.ts'
   import { displayWindowMaximiseMessage } from './display-window-messages.ts'
-  import { processPlantIdForObject, readUnitOverviewView, type ProcessPlantActionCatalogEntry } from './process-display-client.ts'
   import {
     readProcessDisplayWindowBounds,
     storeProcessDisplayWindowBounds,
     type ProcessDisplayWindowBounds,
   } from './process-display-layout.ts'
 
-  // The one process display window of a Run. It steps through every display
-  // the operator can bring up here: the unit overview of each Plant in the
-  // Run and every display the conversation's answers composed. Each display
-  // is live when shown and has its own zoom. The window moves, resizes and
-  // maximises; it never changes what it shows unless the operator asks, and
-  // Esc never closes it (inside a display, Esc is the display's Back).
+  // The one display window of a Run. It steps through every display the
+  // operator can bring up here: World's default display of each asset the Run
+  // observes, in rail order, and every display the conversation's answers
+  // composed. Each display is live when shown and has its own zoom. Its
+  // header carries the tools the shown asset's Pack gives the window
+  // (windowTools), and the asset's procedures and status. The window moves,
+  // resizes and maximises; it never changes what it shows unless the operator
+  // asks, and Esc never closes it (inside a display, Esc is the display's Back).
 
   interface Props {
     /** The Run of the page, from its address: the window opens without waiting for the page to open the Run. */
     readonly simulationRunId: SimulationRunId
-    /** Whether the page has opened the Run; its Plants, actions and procedures wait for it. */
+    /** Whether the page has opened the Run; its assets' tools and procedures wait for it. */
     readonly runJoin: DeckRunJoin
-    /** The Run's Process Plants, in rail order. */
-    readonly plantObjects: ReadonlyArray<OperationalObject>
+    /** The assets the Run observes, in rail order: the window opens each one's World default. */
+    readonly assetObjects: ReadonlyArray<OperationalObject>
     /** The conversation's displays, oldest first, as the Host relays them. */
     readonly listings: ReadonlyArray<EmbeddedViewListing>
     readonly request: DisplayWindowRequest
+    /** Whether an asset runs computer-based procedures (its Pack scopes them to it). */
+    readonly runsProcedures: (object: OperationalObject) => boolean
     readonly procedureSummariesFor: (object: OperationalObject) => ProcedureRunSummaryGroup
     readonly openProcedureSystemAt: (object: OperationalObject, summary?: ProcedureRunSummary) => void
     /** Frames the page's live map (a vignette's "Show on map"). */
@@ -119,16 +114,17 @@
   let {
     simulationRunId,
     runJoin,
-    plantObjects,
+    assetObjects,
     listings,
     request,
+    runsProcedures,
     procedureSummariesFor,
     openProcedureSystemAt,
     focusMap,
     close,
   }: Props = $props()
 
-  type OverviewView =
+  type DefaultView =
     | { readonly state: 'loading' }
     | { readonly state: 'ready'; readonly envelope: EmbeddedViewEnvelope }
     | { readonly state: 'failed'; readonly error: string }
@@ -140,7 +136,7 @@
     readonly origin: ProcessDisplayWindowBounds
   }
 
-  type Popover = 'list' | 'zoom' | 'more' | 'instructor'
+  type Popover = 'list' | 'zoom' | 'more'
   type HeaderTier = 'wide' | 'medium' | 'narrow' | 'tiny'
 
   interface ResizeHandle {
@@ -174,8 +170,6 @@
   const currentViewport = (): DisplaySize => ({ width: window.innerWidth, height: window.innerHeight })
 
   let notice = $state<string | null>(null)
-  // An Instructor action's own notice and its tone: sent reads neutral and accepted as success; any other notice reads as an error.
-  let actionNotice = $state<{ readonly text: string; readonly tone: 'neutral' | 'success' } | null>(null)
 
   const defaultWindowBounds = (viewport: DisplaySize): ProcessDisplayWindowBounds => ({
     x: windowConstraints.margin,
@@ -200,7 +194,7 @@
   let shown = $state.raw<ShownDeckEntry | null>(null)
   let acknowledgement = $state.raw<DeckAcknowledgement>(openingAcknowledgement(untrack(() => listings)))
   let mountedFrames = $state.raw<ReadonlyArray<MountedDeckFrame>>([])
-  let overviewViews = $state.raw<ReadonlyMap<string, OverviewView>>(new Map())
+  let defaultViews = $state.raw<ReadonlyMap<string, DefaultView>>(new Map())
   let zoomStates = $state.raw<ReadonlyMap<string, DisplayZoomState>>(new Map())
   let extents = $state.raw<ReadonlyMap<string, DisplayExtent>>(new Map())
   let framesUp = $state.raw<ReadonlySet<string>>(new Set())
@@ -209,8 +203,6 @@
   let bodySize = $state.raw<DisplaySize | null>(null)
   let popover = $state<Popover | null>(null)
   let listActiveIndex = $state(0)
-  let actionsPlant = $state.raw<DeckPlant | null>(null)
-  let runningActionId = $state<string | null>(null)
   let sectionElement = $state<HTMLElement | null>(null)
   let bodyElement = $state<HTMLElement | null>(null)
   let popoverElement = $state<HTMLElement | null>(null)
@@ -218,49 +210,48 @@
   let positionButton = $state<HTMLButtonElement | null>(null)
   let zoomButton = $state<HTMLButtonElement | null>(null)
   let moreButton = $state<HTMLButtonElement | null>(null)
-  let instructorButton = $state<HTMLButtonElement | null>(null)
   let showSequence = 0
   let appliedRequest = -1
   let disposed = false
   const pendingZoomWrites = new Map<string, { readonly entry: DeckEntry; readonly state: DisplayZoomState }>()
   let zoomWriteTimer: ReturnType<typeof setTimeout> | null = null
 
-  const plants = $derived<ReadonlyArray<DeckPlant>>(plantObjects.flatMap(object => {
-    const plantId = processPlantIdForObject(object)
-    return plantId === null ? [] : [{ objectId: String(object.id), plantId, label: object.label }]
-  }))
-  const deck = $derived(buildDisplayDeck({ simulationRunId: runId, plants, listings, shown }))
+  const assets = $derived<ReadonlyArray<DeckAsset>>(assetObjects.map(object => ({ objectId: object.id, packId: object.packId, label: object.label })))
+  const deck = $derived(buildDisplayDeck({ simulationRunId: runId, assets, listings, shown }))
   const current = $derived(shown === null ? null : deck.find(entry => entry.key === shown!.entry.key) ?? null)
   const position = $derived(current === null ? 0 : deck.findIndex(entry => entry.key === current!.key) + 1)
   const hasPrevious = $derived(position > 1)
   const hasNext = $derived(position > 0 && position < deck.length)
   const unseen = $derived(unseenListings(acknowledgement, listings))
   const announcement = $derived(newDisplayAnnouncement(unseen))
-  const plantTarget = $derived(current === null
+  // The asset the shown display is about: its Pack's tools, its procedures and its status dot act on it.
+  const assetTarget = $derived(current === null
     ? { ok: false as const, reason: 'No display is shown' }
-    : deckEntryPlant(current, plants, runJoin))
-  const plantObject = $derived(plantTarget.ok
-    ? plantObjects.find(object => String(object.id) === plantTarget.plant.objectId) ?? null
+    : deckEntryAsset(current, assets, runJoin))
+  const assetObject = $derived(assetTarget.ok
+    ? assetObjects.find(object => object.id === assetTarget.asset.objectId) ?? null
     : null)
-  const procedureSummaries = $derived(plantObject === null ? emptyProcedureRunSummaries : procedureSummariesFor(plantObject))
-  const statusColor = $derived(plantObject === null ? null : statusToneColor(
-    plantObject.operational.priority === 'critical'
+  const assetUnavailable = $derived(assetTarget.ok ? null : assetTarget.reason)
+  // The procedures control shows for an asset that runs procedures, and, disabled with its reason, while the shown display names none.
+  const proceduresShown = $derived(assetObject === null ? assetUnavailable !== null : runsProcedures(assetObject))
+  const procedureSummaries = $derived(assetObject !== null && runsProcedures(assetObject) ? procedureSummariesFor(assetObject) : emptyProcedureRunSummaries)
+  const statusColor = $derived(assetObject === null ? null : statusToneColor(
+    assetObject.operational.priority === 'critical'
       ? 'error'
-      : plantObject.operational.priority === 'high'
+      : assetObject.operational.priority === 'high'
         ? 'working'
-        : plantObject.operational.status === 'normal'
+        : assetObject.operational.status === 'normal'
           ? 'ready'
           : 'idle',
   ))
-  const plantUnavailable = $derived(plantTarget.ok ? null : plantTarget.reason)
   const currentZoom = $derived(current === null ? null : zoomStates.get(current.key) ?? null)
   const zoomPercent = $derived(currentZoom === null ? 100 : displayZoomPercent(currentZoom.zoom))
   const scaled = $derived(currentZoom !== null && !isActualSize(currentZoom.zoom))
-  const currentOverview = $derived(current?.source === 'overview' ? overviewViews.get(current.key) ?? null : null)
+  const currentDefault = $derived(current?.source === 'asset' ? defaultViews.get(current.key) ?? null : null)
   const currentEnvelope = $derived(current === null ? null : envelopeFor(current))
   // A listing this window cannot show (another view type) says so in place of a frame.
   const currentRefusal = $derived(current?.source === 'answer' ? current.refusal : null)
-  const connecting = $derived(current !== null && currentOverview?.state !== 'failed' && currentRefusal === null
+  const connecting = $derived(current !== null && currentDefault?.state !== 'failed' && currentRefusal === null
     && (currentEnvelope === null || !framesUp.has(current.key)))
   const effectiveBounds = $derived<ProcessDisplayWindowBounds>(maximised
     ? {
@@ -274,7 +265,7 @@
     ? 'wide'
     : effectiveBounds.width >= 700 ? 'medium' : effectiveBounds.width >= 520 ? 'narrow' : 'tiny')
   const groups = $derived([
-    { id: 'plants', label: 'Plant displays', entries: deck.filter(entry => entry.source === 'overview') },
+    { id: 'assets', label: 'Overviews', entries: deck.filter(entry => entry.source === 'asset') },
     { id: 'answers', label: 'From answers', entries: deck.filter(entry => entry.source === 'answer') },
   ].filter(group => group.entries.length > 0))
   // A frame stays while its display briefly leaves the deck (the chat page reloading empties the list).
@@ -285,7 +276,7 @@
 
   function envelopeFor(entry: DeckEntry): EmbeddedViewEnvelope | null {
     if (entry.source === 'answer') return entry.refusal === null ? entry.listing.envelope : null
-    const view = overviewViews.get(entry.key)
+    const view = defaultViews.get(entry.key)
     return view?.state === 'ready' ? view.envelope : null
   }
 
@@ -310,10 +301,10 @@
     }
   }
 
-  const zoomStoreFor = (entry: DeckEntry) => entry.source === 'overview' ? overviewZooms : answerZooms
+  const zoomStoreFor = (entry: DeckEntry) => entry.source === 'asset' ? overviewZooms : answerZooms
 
   const zoomStorageKey = (entry: DeckEntry): string =>
-    entry.source === 'overview' ? overviewZoomKey(runId, entry.plant.plantId) : entry.listing.key
+    entry.source === 'asset' ? overviewZoomKey(runId, entry.asset.objectId) : entry.listing.key
 
   const flushZoomWrites = (): void => {
     zoomWriteTimer = null
@@ -389,7 +380,7 @@
   const measureBody = (size: DisplaySize): void => {
     if (bodySize !== null && bodySize.width === size.width && bodySize.height === size.height) return
     bodySize = size
-    // The shown display follows, even an overview whose view is still loading. A hidden
+    // The shown display follows, even a default whose view is still loading. A hidden
     // one keeps the size it was hidden at and refits when it is shown again (showEntry).
     const entry = current
     const state = entry === null ? undefined : zoomStates.get(entry.key)
@@ -407,6 +398,14 @@
     extents = withoutKey(extents, key)
   }
 
+  // A display shown after another, its Back returning to the one it came from.
+  const openAfter = (from: DeckEntry, listing: EmbeddedViewListing): void => {
+    const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing })
+    if (entry === null) return
+    returnTo = withValue(returnTo, entry.key, from)
+    showEntry(entry)
+  }
+
   // A display asks for equipment it names to be opened after it (a safety function chip, a banner label): the
   // window shows it as a display of its own, and its Back returns to the one it came from.
   const frameOpen = (key: string, request: DisplayFrameOpen): void => {
@@ -419,10 +418,22 @@
       notice = `${request.title} cannot be opened: ${errorText(err)}`
       return
     }
-    const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing })
-    if (entry === null) return
-    returnTo = withValue(returnTo, entry.key, from.entry)
-    showEntry(entry)
+    openAfter(from.entry, listing)
+  }
+
+  // A Pack's tools open a subject's World default after the shown display (a proposal's item): Back returns to it.
+  const openDefaultAfter = async (subject: string): Promise<void> => {
+    const from = current
+    if (from === null) return
+    let listing: EmbeddedViewListing
+    try {
+      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: runId, view: await readDefaultDisplay(runId, subject) })
+      listing = openedListing({ key: from.key, title: from.title, envelope }, { state: envelope.state, title: envelope.title })
+    } catch (err) {
+      if (!disposed) notice = `${subject} cannot be opened: ${errorText(err)}`
+      return
+    }
+    if (!disposed) openAfter(from, listing)
   }
 
   const frameBack = (key: string): void => {
@@ -436,15 +447,15 @@
     notice = problem
   }
 
-  const loadOverviewView = async (entry: OverviewDeckEntry): Promise<void> => {
-    const existing = overviewViews.get(entry.key)
+  const loadDefaultView = async (entry: AssetDeckEntry): Promise<void> => {
+    const existing = defaultViews.get(entry.key)
     if (existing && existing.state !== 'failed') return
-    overviewViews = withValue(overviewViews, entry.key, { state: 'loading' })
+    defaultViews = withValue(defaultViews, entry.key, { state: 'loading' })
     try {
-      const envelope = await readUnitOverviewView(runId, entry.plant.plantId)
-      if (!disposed) overviewViews = withValue(overviewViews, entry.key, { state: 'ready', envelope })
+      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: runId, view: await readDefaultDisplay(runId, entry.asset.objectId) })
+      if (!disposed) defaultViews = withValue(defaultViews, entry.key, { state: 'ready', envelope })
     } catch (err) {
-      if (!disposed) overviewViews = withValue(overviewViews, entry.key, { state: 'failed', error: errorText(err) })
+      if (!disposed) defaultViews = withValue(defaultViews, entry.key, { state: 'failed', error: errorText(err) })
     }
   }
 
@@ -452,7 +463,7 @@
 
   const showEntry = (entry: DeckEntry): void => {
     const nextShown = shownDeckEntry(deck, entry, listings)
-    const nextDeck = buildDisplayDeck({ simulationRunId: runId, plants, listings, shown: nextShown })
+    const nextDeck = buildDisplayDeck({ simulationRunId: runId, assets, listings, shown: nextShown })
     showSequence += 1
     shown = nextShown
     const kept = mountedFrames.filter(frame => nextDeck.some(candidate => candidate.key === frame.key))
@@ -460,7 +471,7 @@
     mountedFrames = entry.source === 'answer' && entry.refusal !== null ? kept : touchMountedFrames(kept, entry, showSequence)
     acknowledgement = acknowledgeShown(acknowledgement, listings, entry)
     prepareZoom(entry)
-    if (entry.source === 'overview') void loadOverviewView(entry)
+    if (entry.source === 'asset') void loadDefaultView(entry)
   }
 
   const step = (direction: DeckStep): void => {
@@ -487,15 +498,9 @@
     if (entry !== null && entry.source === 'answer' && !entry.listed && current !== null && current.key !== entry.key) returnTo = withValue(returnTo, entry.key, current)
     if (entry !== null) showEntry(entry)
     else {
-      notice = 'That Plant is not in this Run.'
+      notice = 'That asset is not in this Run.'
       if (shown === null && deck[0]) showEntry(deck[0])
     }
-    // The dialog takes focus itself as it opens, and gives it back to the window as it closes.
-    if (next.instructorActions && entry !== null && plantTarget.ok) {
-      openPlantActions()
-      return
-    }
-    if (next.instructorActions && entry !== null) notice = `Instructor actions: ${plantTarget.reason}`
     if (next.focus) void focusWindow()
   }
 
@@ -522,7 +527,7 @@
   // --- Popovers and keys ----------------------------------------------------
 
   const popoverTrigger = (which: Popover): HTMLElement | null =>
-    which === 'list' ? positionButton : which === 'zoom' ? zoomButton : which === 'instructor' ? instructorButton : moreButton
+    which === 'list' ? positionButton : which === 'zoom' ? zoomButton : moreButton
 
   const closePopover = (returnFocus: boolean): void => {
     const which = popover
@@ -656,117 +661,29 @@
     }
   }
 
-  // --- Proposals and the operations log --------------------------------------
+  // --- The asset's tools and procedures ---------------------------------------
 
-  // The pending proposals on the shown display's Plant (QA-10), read every two seconds while it shows a Plant's display.
-  // The chip lists them, and is absent while none waits; a read that fails says so and keeps the last list.
-  let proposalEntries = $state.raw<ReadonlyArray<ProposalListEntry>>([])
-  const PROPOSALS_EVERY_MS = 2_000
-  const proposalsPlant = $derived(plantTarget.ok ? plantTarget.plant.plantId : null)
+  // The tools the shown asset's Pack gives the window's header, loaded once per Pack; a Pack that gives none adds none.
+  let toolsByPack = $state.raw<ReadonlyMap<string, Component<PackWindowToolsProps> | null>>(new Map())
+  const toolsPack = $derived(assetTarget.ok ? assetTarget.asset.packId : null)
   $effect(() => {
-    const plantId = proposalsPlant
-    proposalEntries = []
-    if (plantId === null) return
-    let reading = false
-    const read = async (): Promise<void> => {
-      if (reading) return
-      reading = true
+    const packId = toolsPack
+    if (packId === null || untrack(() => toolsByPack.has(packId))) return
+    void (async (): Promise<void> => {
       try {
-        proposalEntries = await readPendingProposals(runId, plantId)
+        const load = (await loadUiPack(packId)).ui?.windowTools
+        const tools = load === undefined ? null : (await load()).default
+        if (!disposed) toolsByPack = withValue(toolsByPack, packId, tools)
       } catch (err) {
-        notice = `Pending proposals cannot be read: ${errorText(err)}`
-      } finally {
-        reading = false
+        if (!disposed) notice = `The window tools of ${packId} cannot be loaded: ${errorText(err)}`
       }
-    }
-    void read()
-    const timer = setInterval(() => { void read() }, PROPOSALS_EVERY_MS)
-    return () => clearInterval(timer)
+    })()
   })
-  /** Whether a drawing draws an item on a symbol of its own (by the ids controls.list names it by). */
-  const drawsOwnSymbol = (display: Pick<CompiledComposedDisplay, 'panels'>, itemId: string): boolean =>
-    display.panels.some(panel => panel.kind === 'mimic' && panel.mimic.items.some(item =>
-      (item.binding.item.kind === 'device' ? [`${item.components[0]}.${item.binding.item.device}`] : item.components).includes(itemId)))
-
-  // A proposal opens, after the shown display, a detail that draws its item on its own symbol, which pins the proposal's
-  // popover on it as it opens (HMI review of run 26c, g2): the first of the details its entry names that World draws so
-  // for this window's room; where none does, the first, whose card then stands on the item's host.
-  const reviewProposal = async (entry: ProposalListEntry): Promise<void> => {
-    const from = current
-    if (from === null || !plantTarget.ok) return
-    const plantId = plantTarget.plant.plantId
-    const states = entry.opens.map(components => JSON.stringify(detailDisplayStateSchema.parse({ detail: { plantId, components: [...components] } })))
-    const room = bodyElement === null ? null : { width: bodyElement.clientWidth, height: bodyElement.clientHeight }
-    let state = states[0]!
-    if (states.length > 1 && room !== null) {
-      for (const candidate of states) {
-        try {
-          const drawn = await composedDisplayClient.view(runId, plantId, candidate, room)
-          if (drawsOwnSymbol(drawn.display, entry.item)) { state = candidate; break }
-        } catch (err) {
-          notice = `${entry.action}: its detail cannot be drawn: ${errorText(err)}`
-          return
-        }
-      }
-    }
-    frameOpen(from.key, { state, title: `Review: ${entry.action}` })
-  }
-
-  let logPlant = $state.raw<DeckPlant | null>(null)
-  const openOperationsLog = (): void => {
-    popover = null
-    if (plantTarget.ok) logPlant = plantTarget.plant
-  }
-  const closeOperationsLog = (): void => {
-    logPlant = null
-    void focusWindow()
-  }
-
-  // --- Instructor actions ---------------------------------------------------
-
-  const openPlantActions = (): void => {
-    popover = null
-    if (plantTarget.ok) actionsPlant = plantTarget.plant
-  }
-
-  const closePlantActions = (): void => {
-    actionsPlant = null
-    void focusWindow()
-  }
+  const Tools = $derived(toolsPack === null ? null : toolsByPack.get(toolsPack) ?? null)
 
   const openProcedures = (summary?: ProcedureRunSummary): void => {
     popover = null
-    if (plantObject !== null) openProcedureSystemAt(plantObject, summary)
-  }
-
-  // The display samples the Plant every second, so an action shows there without a reload; the window's notice
-  // says what became of it: sent, then accepted or refused with the Plant's reason, or why it could not be sent.
-  const runPlantAction = async (
-    plant: DeckPlant,
-    action: ProcessPlantActionCatalogEntry,
-    parameters: Readonly<Record<string, number>>,
-  ): Promise<void> => {
-    if (runningActionId !== null) return
-    actionsPlant = null
-    runningActionId = action.id
-    const named = `Instructor action "${action.title}" on ${plant.label}`
-    actionNotice = { text: `${named}: sent…`, tone: 'neutral' }
-    notice = actionNotice.text
-    try {
-      const response = await invokeSimulationRunCapability(runId, {
-        capabilityId: processPlantActionInvokeCommandKind,
-        input: { plantId: plant.plantId, actionId: action.id, parameters },
-      })
-      if (response.kind !== 'command') throw new Error(`${processPlantActionInvokeCommandKind} is not a command`)
-      if (!disposed) {
-        actionNotice = response.result.ok ? { text: `${named}: accepted.`, tone: 'success' } : null
-        notice = actionNotice?.text ?? `${named}: refused. ${response.result.reason}`
-      }
-    } catch (err) {
-      if (!disposed) notice = `${named} could not be sent: ${errorText(err)}`
-    } finally {
-      if (!disposed) runningActionId = null
-    }
+    if (assetObject !== null) openProcedureSystemAt(assetObject, summary)
   }
 
   runOnMount(() => {
@@ -807,20 +724,6 @@
     }
   })
 </script>
-
-{#snippet instructorItems(inMenu: boolean)}
-  <button
-    type="button"
-    class="display-window-menu-item"
-    role={inMenu ? 'menuitem' : undefined}
-    title={plantTarget.ok ? '' : plantTarget.reason}
-    aria-disabled={!plantTarget.ok}
-    onclick={openPlantActions}
-  >
-    <Zap size={16} aria-hidden="true" />
-    <span>{plantTarget.ok ? `Scenario events and faults on ${plantTarget.plant.label}…` : `Scenario events and faults: ${plantTarget.reason}`}</span>
-  </button>
-{/snippet}
 
 <div class="process-display-window-layer">
   <!-- Zoom keys and Esc act while focus is anywhere in the window: the section delegates them from its controls. -->
@@ -897,9 +800,9 @@
           class="process-display-asset-dot"
           class:unknown={statusColor === null}
           style:background={statusColor}
-          title={plantObject === null ? (plantUnavailable ?? '') : `${plantObject.label}: ${plantObject.operational.status}`}
+          title={assetObject === null ? (assetUnavailable ?? '') : `${assetObject.label}: ${assetObject.operational.status}`}
         ></span>
-        <strong id={windowLabelId}>{current?.title ?? 'Process displays'}</strong>
+        <strong id={windowLabelId}>{current?.title ?? 'Displays'}</strong>
         {#if current !== null && tier !== 'narrow' && tier !== 'tiny'}
           <span class="display-window-caption">· {current.caption}</span>
         {/if}
@@ -968,47 +871,28 @@
         {/if}
       </div>
 
-      {#if tier === 'wide' || tier === 'medium'}
-        <div class="display-window-plant" role="group" aria-label="Plant">
-          <ProposalsChip entries={proposalEntries} open={entry => { void reviewProposal(entry) }} />
+      {#if (tier === 'wide' || tier === 'medium') && proceduresShown}
+        <div class="display-window-procedures" role="group" aria-label="Procedures">
           <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
           <button
             type="button"
             class="display-window-button"
-            aria-label={plantTarget.ok ? `Operations log of ${plantTarget.plant.label}` : `Operations log unavailable: ${plantTarget.reason}`}
-            title={plantTarget.ok ? `Operations log of ${plantTarget.plant.label}: what people and AI agents did and proposed` : plantTarget.reason}
-            aria-disabled={!plantTarget.ok}
-            onclick={openOperationsLog}
-          >
-            <History size={17} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="display-window-button"
-            aria-label={plantObject !== null ? `Computer-based procedures for ${plantObject.label}` : `Procedures unavailable: ${plantUnavailable ?? ''}`}
-            title={plantObject !== null ? `Computer-based procedures for ${plantObject.label}` : (plantUnavailable ?? '')}
-            aria-disabled={plantObject === null}
+            aria-label={assetObject !== null ? `Computer-based procedures for ${assetObject.label}` : `Procedures unavailable: ${assetUnavailable ?? ''}`}
+            title={assetObject !== null ? `Computer-based procedures for ${assetObject.label}` : (assetUnavailable ?? '')}
+            aria-disabled={assetObject === null}
             onclick={() => openProcedures()}
           >
             <ClipboardList size={17} aria-hidden="true" />
           </button>
         </div>
-        <!-- The instructor's tools sit apart from the operator's, under their own label: injecting a fault is not an operator action. -->
-        <div class="display-window-instructor" role="group" aria-label="Instructor">
-          <button
-            bind:this={instructorButton}
-            type="button"
-            class="display-window-instructor-button"
-            aria-haspopup="menu"
-            aria-expanded={popover === 'instructor'}
-            title="Instructor tools: scenario events and faults"
-            onclick={() => togglePopover('instructor')}
-          >
-            <Zap size={15} aria-hidden="true" />
-            <span>Instructor</span>
-            <ChevronDown size={14} aria-hidden="true" />
-          </button>
-        </div>
+      {/if}
+      {#if Tools !== null && assetTarget.ok}
+        {@const asset = assetTarget.asset}
+        {#key asset.objectId}
+          <Tools runId={runId} objectId={asset.objectId} openDisplay={(subject: string) => { void openDefaultAfter(subject) }} />
+        {/key}
+      {/if}
+      {#if tier === 'wide' || tier === 'medium'}
         <button
           type="button"
           class="display-window-button"
@@ -1023,16 +907,14 @@
           bind:this={moreButton}
           type="button"
           class="display-window-button display-window-more"
-          aria-label="More: proposals, operations log, procedures, maximise, Instructor tools"
+          aria-label={proceduresShown ? 'More: procedures, maximise' : 'More: maximise'}
           title="More"
           aria-haspopup="true"
           aria-expanded={popover === 'more'}
           onclick={() => togglePopover('more')}
         >
           <Ellipsis size={18} aria-hidden="true" />
-          {#if proposalEntries.length > 0}
-            <span class="display-window-count" aria-label="{proposalEntries.length} pending proposals">{proposalEntries.length}</span>
-          {:else if procedureSummaries.active.length > 0}
+          {#if procedureSummaries.active.length > 0}
             <span class="display-window-count" aria-label="{procedureSummaries.active.length} active procedures">{procedureSummaries.active.length}</span>
           {/if}
         </button>
@@ -1070,16 +952,16 @@
         />
       {/each}
       {#if current === null}
-        <div class="display-window-message">No process display to show.</div>
+        <div class="display-window-message">No display to show.</div>
       {:else if currentRefusal !== null}
         <div class="display-window-message" role="status">
           <span><strong>{current.title}</strong> cannot be shown here: {currentRefusal}.</span>
         </div>
-      {:else if currentOverview?.state === 'failed' && current.source === 'overview'}
+      {:else if currentDefault?.state === 'failed' && current.source === 'asset'}
         {@const failedEntry = current}
         <div class="display-window-message error" role="alert">
-          <span>{currentOverview.error}</span>
-          <button type="button" onclick={() => { void loadOverviewView(failedEntry) }}>Retry</button>
+          <span>{currentDefault.error}</span>
+          <button type="button" onclick={() => { void loadDefaultView(failedEntry) }}>Retry</button>
         </div>
       {:else if connecting}
         <div class="display-window-message" role="status">
@@ -1088,7 +970,7 @@
         </div>
       {/if}
       {#if notice}
-        <div class="process-display-notice" class:neutral={notice === actionNotice?.text && actionNotice.tone === 'neutral'} class:success={notice === actionNotice?.text && actionNotice.tone === 'success'} role="status">
+        <div class="process-display-notice" role="status">
           <span>{notice}</span>
           <button type="button" aria-label="Dismiss" onclick={() => { notice = null }}><X size={16} aria-hidden="true" /></button>
         </div>
@@ -1166,28 +1048,19 @@
       </div>
     {:else if popover === 'more'}
       <div bind:this={popoverElement} class="display-window-popover more" role="group" aria-label="More">
-        <ProposalsChip entries={proposalEntries} open={entry => { popover = null; void reviewProposal(entry) }} />
-        <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
-        <button
-          type="button"
-          class="display-window-menu-item"
-          title={plantTarget.ok ? '' : plantTarget.reason}
-          aria-disabled={!plantTarget.ok}
-          onclick={openOperationsLog}
-        >
-          <History size={16} aria-hidden="true" />
-          <span>{plantTarget.ok ? `Operations log of ${plantTarget.plant.label}` : `Operations log: ${plantTarget.reason}`}</span>
-        </button>
-        <button
-          type="button"
-          class="display-window-menu-item"
-          title={plantObject !== null ? '' : (plantUnavailable ?? '')}
-          aria-disabled={plantObject === null}
-          onclick={() => openProcedures()}
-        >
-          <ClipboardList size={16} aria-hidden="true" />
-          <span>{plantObject !== null ? `Procedures for ${plantObject.label}` : `Procedures: ${plantUnavailable ?? ''}`}</span>
-        </button>
+        {#if proceduresShown}
+          <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
+          <button
+            type="button"
+            class="display-window-menu-item"
+            title={assetObject !== null ? '' : (assetUnavailable ?? '')}
+            aria-disabled={assetObject === null}
+            onclick={() => openProcedures()}
+          >
+            <ClipboardList size={16} aria-hidden="true" />
+            <span>{assetObject !== null ? `Procedures for ${assetObject.label}` : `Procedures: ${assetUnavailable ?? ''}`}</span>
+          </button>
+        {/if}
         <button
           type="button"
           class="display-window-menu-item"
@@ -1196,12 +1069,6 @@
           {#if maximised}<Minimize2 size={16} aria-hidden="true" />{:else}<Maximize2 size={16} aria-hidden="true" />{/if}
           <span>{maximised ? 'Restore the window' : 'Maximise the window'}</span>
         </button>
-        <div class="display-window-group-label">Instructor</div>
-        {@render instructorItems(false)}
-      </div>
-    {:else if popover === 'instructor'}
-      <div bind:this={popoverElement} class="display-window-popover instructor" role="menu" aria-label="Instructor">
-        {@render instructorItems(true)}
       </div>
     {/if}
 
@@ -1222,18 +1089,4 @@
       {/each}
     {/if}
   </section>
-
-  {#if logPlant !== null}
-    <OperationsLogDialog simulationRunId={runId} plant={logPlant} close={closeOperationsLog} />
-  {/if}
-
-  {#if actionsPlant !== null}
-    <PlantActionsDialog
-      simulationRunId={runId}
-      plant={actionsPlant}
-      {runningActionId}
-      run={(plant, action, parameters) => { void runPlantAction(plant, action, parameters) }}
-      close={closePlantActions}
-    />
-  {/if}
 </div>

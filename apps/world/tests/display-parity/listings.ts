@@ -1,7 +1,8 @@
 /**
- * T01: which listings the display window opens, one at a time, and the
- * reason it gives for one it refuses. Per listing, so the facts hold whether
- * a refused listing refuses its whole list (today) or only itself.
+ * T01, T39 P8: which listings the display window opens, one at a time, and
+ * the reason it gives for one it refuses. Per listing, so the facts hold
+ * whether a refused listing refuses its whole list or only itself. The
+ * window shows vignettes; the plant's own process display went at the swap.
  */
 import { listingRefusal, readDisplayWindowHostMessage } from '../../src/ui/process-display/display-window-messages.ts'
 
@@ -13,15 +14,16 @@ const listing = (overrides: Record<string, unknown> = {}) => ({
   key: 'room/turn/call/key',
   caption: 'Answer 14:02:31',
   envelope: {
-    moduleId: 'world', viewType: 'process-plant.display',
+    moduleId: 'world', viewType: 'display.vignette',
     subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-1' },
-    title: 'SG B level', height: 600, state: '{"composition":{}}',
+    title: 'SG B level', height: 600, state: '{"title":"SG B level"}',
     ...overrides,
   },
 })
 
 export const LISTINGS: Readonly<Record<string, ReturnType<typeof listing>>> = {
-  'a process display about a Run of this Workspace': listing(),
+  'a vignette about a Run of this Workspace': listing(),
+  'a process display of the old path': listing({ viewType: 'process-plant.display', state: '{"composition":{}}' }),
   'another Workspace': listing({ subject: { workspaceId: 'f1b1e5a8-9a43-4d4e-9d3a-1a7c4b1e2f00', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' } }),
   'not a World view': listing({ moduleId: 'agents' }),
   'another view type': listing({ viewType: 'electric-grid.display' }),

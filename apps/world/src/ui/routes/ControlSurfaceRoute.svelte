@@ -74,7 +74,8 @@
   import WorldStatusLine from '../WorldStatusLine.svelte'
   import AlertStrip from '../displays/AlertStrip.svelte'
   import StartupModal from '../StartupModal.svelte'
-  import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
+  import { processPlantIdForObject } from '../../packs/process-plant/model.ts'
+  import type { ProcessPlantArtifactKind } from '../../packs/process-plant/ui/plant-client.ts'
   import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import PlantCard, { type PlantCardAction } from '../../packs/process-plant/ui/PlantCard.svelte'
@@ -977,7 +978,7 @@
 
   // Opened (or jumped) from the rail, the window takes focus and gives it back
   // on close; opened from chat, it leaves focus with the conversation.
-  const requestDisplayWindow = (target: DisplayWindowTarget, focus: boolean, instructorActions = false): void => {
+  const requestDisplayWindow = (target: DisplayWindowTarget, focus: boolean): void => {
     if (focus) {
       const active = document.activeElement
       displayWindowReturnFocus = active instanceof HTMLElement ? active : null
@@ -985,7 +986,7 @@
       displayWindowReturnFocus = null
     }
     displayWindowRequestSequence += 1
-    displayWindowRequest = { sequence: displayWindowRequestSequence, target, focus, instructorActions }
+    displayWindowRequest = { sequence: displayWindowRequestSequence, target, focus }
     displayWindowOpen = true
     void (async (): Promise<void> => {
       try {
@@ -998,8 +999,8 @@
   }
 
   const openProcessDisplay = (object: OperationalObject): void => {
-    if (processPlantIdForObject(object) === null) return
-    requestDisplayWindow({ kind: 'overview', objectId: object.id }, true)
+    if (!observedAssetObjects.some(asset => asset.id === object.id)) return
+    requestDisplayWindow({ kind: 'asset', objectId: object.id }, true)
   }
 
   const openDroneControl = (object: OperationalObject): void => {
@@ -1078,11 +1079,15 @@
         }]
   }))
 
-  // The window steps through the Plants' overviews in rail order; Plants the rail does not list follow.
-  const processPlantObjects = $derived.by<ReadonlyArray<OperationalObject>>(() => {
-    const inRail = categoryRows.flatMap(row => row.objects).filter(object => processPlantIdForObject(object) !== null)
+  // The window steps through the defaults of the assets the Run observes (their Pack declares observations), in
+  // rail order; those the rail does not list follow.
+  const observedAssetObjects = $derived.by<ReadonlyArray<OperationalObject>>(() => {
+    const pack = activePack
+    if (pack === null) return []
+    const observed = (object: OperationalObject): boolean => pack.packForObject(object).descriptor.contributions.includes('observation')
+    const inRail = categoryRows.flatMap(row => row.objects).filter(observed)
     const railIds = new Set(inRail.map(object => object.id))
-    return [...inRail, ...objects.filter(object => processPlantIdForObject(object) !== null && !railIds.has(object.id))]
+    return [...inRail, ...objects.filter(object => observed(object) && !railIds.has(object.id))]
   })
 
   const droneControlWindowModels = $derived<ReadonlyArray<DroneWindowModel>>(
@@ -1452,7 +1457,7 @@
       case 'overview': return openProcessDisplay(object)
       case 'procedures': return openProcedureSystemAt(object, procedure)
       case 'safety-procedure': return openProcedureWindowAt(object, view?.safetyFunction?.notRunning ?? undefined)
-      case 'instructor': return requestDisplayWindow({ kind: 'overview', objectId: object.id }, true, true)
+      case 'instructor': return requestDisplayWindow({ kind: 'asset', objectId: object.id }, true)
       case 'assistant': {
         if (simulationRunId === null) throw new Error('the Run\'s Assistant was offered before the Run was joined')
         return requestRunAssistant({ workspaceId: activeWorkspaceId(), simulationRunId }, { parent: window.parent, origin: location.origin })
@@ -2315,9 +2320,10 @@
   <DisplayWindow
     simulationRunId={displayWindowRunId}
     runJoin={displayRunJoin}
-    plantObjects={processPlantObjects}
+    assetObjects={observedAssetObjects}
     listings={conversationDisplays}
     request={displayWindowRequest}
+    runsProcedures={object => procedureScopeForObject(object) !== null}
     procedureSummariesFor={procedureSummariesForObject}
     {openProcedureSystemAt}
     focusMap={focusMapTarget}

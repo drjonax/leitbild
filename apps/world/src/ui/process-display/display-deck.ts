@@ -1,24 +1,24 @@
 import type { EmbeddedViewListing } from '@leitbild/contracts'
-import { processDisplayStatePlantId, processDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
+import type { ObjectId } from '../../core/model/index.ts'
 import { listingRefusal } from './display-window-messages.ts'
 import type { DisplayKind } from './display-zoom.ts'
 
-// The displays the one process display window steps through: the unit
-// overview of each Process Plant in the Run, in rail order, then the displays
-// the conversation's answers composed, oldest first. New answers append, but
+// The displays the one display window steps through: World's default display
+// of each asset the Run observes, in rail order, then the displays the
+// conversation's answers composed, oldest first. New answers append, but
 // positions do shift: the conversation lists only its 30 most recent displays,
-// so the oldest drops off the front, and the overviews are inserted ahead of
-// the answers as the Run's Plants load. The window never changes what it shows
+// so the oldest drops off the front, and the defaults are inserted ahead of
+// the answers as the Run's assets load. The window never changes what it shows
 // by itself: the shown display stays (and says why) when it leaves the Run or
 // the conversation, and a new answer only raises "New".
 
 /** Mounted display frames: the shown one and the three most recently shown. */
 export const DISPLAY_DECK_MOUNTED_LIMIT = 4
 
-/** A Process Plant of the Run, as the rail lists it. */
-export interface DeckPlant {
-  readonly objectId: string
-  readonly plantId: string
+/** An observed asset of the Run, as the rail lists it. */
+export interface DeckAsset {
+  readonly objectId: ObjectId
+  readonly packId: string
   readonly label: string
 }
 
@@ -29,10 +29,10 @@ interface DeckEntryBase {
   readonly kind: DisplayKind
 }
 
-export interface OverviewDeckEntry extends DeckEntryBase {
-  readonly source: 'overview'
-  readonly plant: DeckPlant
-  /** False once the Plant left the Run while its overview was shown. */
+export interface AssetDeckEntry extends DeckEntryBase {
+  readonly source: 'asset'
+  readonly asset: DeckAsset
+  /** False once the asset left the Run while its display was shown. */
   readonly inRun: boolean
 }
 
@@ -47,7 +47,7 @@ export interface AnswerDeckEntry extends DeckEntryBase {
   readonly refusal: string | null
 }
 
-export type DeckEntry = OverviewDeckEntry | AnswerDeckEntry
+export type DeckEntry = AssetDeckEntry | AnswerDeckEntry
 
 /** What the window shows, with where it sat in its group so it can stay there when it leaves the list. */
 export interface ShownDeckEntry {
@@ -57,47 +57,47 @@ export interface ShownDeckEntry {
   readonly wasListed: boolean
 }
 
-export const UNIT_OVERVIEW_CAPTION = 'Unit overview'
+export const ASSET_CAPTION = 'Overview'
 export const LEFT_RUN_CAPTION = 'No longer in this Run'
 export const LEFT_CONVERSATION_CAPTION = 'No longer in the conversation'
 const OTHER_RUN_SUFFIX = ' · other Run'
 
-export const overviewDeckKey = (simulationRunId: string, plantId: string): string => `overview:${simulationRunId}:${plantId}`
+export const assetDeckKey = (simulationRunId: string, objectId: string): string => `asset:${simulationRunId}:${objectId}`
 
-// Agents' keys are its own; a prefix keeps them apart from overview keys.
+// Agents' keys are its own; a prefix keeps them apart from asset keys.
 export const answerDeckKey = (listingKey: string): string => `answer:${listingKey}`
 
-interface ParsedDisplayState {
-  readonly kind: DisplayKind
-  readonly plantId: string | null
-}
-
 // Listings keep their identity until the next list replaces them, so each
-// state is parsed once however often the Run's objects change.
-const parsedStates = new WeakMap<EmbeddedViewListing, ParsedDisplayState>()
+// state is read once however often the Run's objects change.
+const namedObjects = new WeakMap<EmbeddedViewListing, ReadonlySet<string>>()
 
-const parseListingState = (listing: EmbeddedViewListing): ParsedDisplayState => {
-  const cached = parsedStates.get(listing)
+/** The objects a vignette's state names, in its refs and its views' object ids; a state that is no JSON names none (its frame says why). */
+const objectsOf = (listing: EmbeddedViewListing): ReadonlySet<string> => {
+  const cached = namedObjects.get(listing)
   if (cached) return cached
-  let parsed: ParsedDisplayState = { kind: 'advice', plantId: null }
+  const named = new Set<string>()
+  const visit = (value: unknown, key: string | null): void => {
+    if (typeof value === 'string' && (key === 'objectId' || key === 'objectIds')) named.add(value)
+    else if (typeof value === 'string' && key === 'refs' && value.includes('#')) named.add(value.slice(0, value.indexOf('#')))
+    else if (Array.isArray(value)) for (const entry of value) visit(entry, key)
+    else if (value !== null && typeof value === 'object') for (const [inner, entry] of Object.entries(value)) visit(entry, inner)
+  }
   try {
-    const state = processDisplayStateSchema.safeParse(JSON.parse(listing.envelope.state) as unknown)
-    // A state World cannot read still opens: its frame says what is wrong. It only names no Plant here.
-    if (state.success) parsed = { kind: 'composition' in state.data ? 'advice' : 'generated', plantId: processDisplayStatePlantId(state.data) }
+    visit(JSON.parse(listing.envelope.state) as unknown, null)
   } catch (err) {
     if (!(err instanceof SyntaxError)) throw err
   }
-  parsedStates.set(listing, parsed)
-  return parsed
+  namedObjects.set(listing, named)
+  return named
 }
 
-const overviewEntry = (simulationRunId: string, plant: DeckPlant): OverviewDeckEntry => ({
-  source: 'overview',
-  key: overviewDeckKey(simulationRunId, plant.plantId),
-  title: plant.label,
-  caption: UNIT_OVERVIEW_CAPTION,
+const assetEntry = (simulationRunId: string, asset: DeckAsset): AssetDeckEntry => ({
+  source: 'asset',
+  key: assetDeckKey(simulationRunId, asset.objectId),
+  title: asset.label,
+  caption: ASSET_CAPTION,
   kind: 'generated',
-  plant,
+  asset,
   inRun: true,
 })
 
@@ -109,7 +109,7 @@ export const answerDeckEntry = (simulationRunId: string, listing: EmbeddedViewLi
     key: answerDeckKey(listing.key),
     title: listing.envelope.title,
     caption: `${listing.caption}${otherRun ? OTHER_RUN_SUFFIX : ''}`,
-    kind: refusal === null ? parseListingState(listing).kind : 'advice',
+    kind: 'advice',
     listing,
     otherRun,
     listed: true,
@@ -122,20 +122,20 @@ const insertAt = <T>(items: ReadonlyArray<T>, index: number, item: T): ReadonlyA
   return [...items.slice(0, at), item, ...items.slice(at)]
 }
 
-/** Overviews in rail order, then the answers' displays oldest first, with the shown entry kept where it was. */
+/** The assets' defaults in rail order, then the answers' displays oldest first, with the shown entry kept where it was. */
 export const buildDisplayDeck = (input: {
   readonly simulationRunId: string
-  readonly plants: ReadonlyArray<DeckPlant>
+  readonly assets: ReadonlyArray<DeckAsset>
   readonly listings: ReadonlyArray<EmbeddedViewListing>
   readonly shown: ShownDeckEntry | null
 }): ReadonlyArray<DeckEntry> => {
-  let overviews: ReadonlyArray<DeckEntry> = input.plants.map(plant => overviewEntry(input.simulationRunId, plant))
+  let defaults: ReadonlyArray<DeckEntry> = input.assets.map(asset => assetEntry(input.simulationRunId, asset))
   let answers: ReadonlyArray<DeckEntry> = input.listings.map(listing => answerDeckEntry(input.simulationRunId, listing))
   const shown = input.shown
   if (shown !== null) {
     const { entry } = shown
-    if (entry.source === 'overview' && !overviews.some(candidate => candidate.key === entry.key)) {
-      overviews = insertAt(overviews, shown.groupIndex, { ...entry, caption: LEFT_RUN_CAPTION, inRun: false })
+    if (entry.source === 'asset' && !defaults.some(candidate => candidate.key === entry.key)) {
+      defaults = insertAt(defaults, shown.groupIndex, { ...entry, caption: LEFT_RUN_CAPTION, inRun: false })
     }
     if (entry.source === 'answer' && !answers.some(candidate => candidate.key === entry.key)) {
       const caption = shown.wasListed
@@ -144,10 +144,10 @@ export const buildDisplayDeck = (input: {
       answers = insertAt(answers, shown.groupIndex, { ...entry, caption, listed: false })
     }
   }
-  return [...overviews, ...answers]
+  return [...defaults, ...answers]
 }
 
-/** Where an entry sits within its group (overviews or answers). */
+/** Where an entry sits within its group (assets or answers). */
 export const deckGroupIndex = (deck: ReadonlyArray<DeckEntry>, key: string): number => {
   const entry = deck.find(candidate => candidate.key === key)
   if (!entry) return 0
@@ -163,7 +163,7 @@ export const shownDeckEntry = (
   entry,
   groupIndex: deck.some(candidate => candidate.key === entry.key)
     ? deckGroupIndex(deck, entry.key)
-    : entry.source === 'answer' ? listings.length : deck.filter(candidate => candidate.source === 'overview').length,
+    : entry.source === 'answer' ? listings.length : deck.filter(candidate => candidate.source === 'asset').length,
   wasListed: entry.source === 'answer' && listings.some(listing => listing.key === entry.listing.key),
 })
 
@@ -182,7 +182,7 @@ export const observeListingsForShown = (
 
 export type DeckStep = 'first' | 'previous' | 'next' | 'last'
 
-/** Stepping stops at the ends: from the first overview, back never lands on the newest answer. */
+/** Stepping stops at the ends: from the first asset, back never lands on the newest answer. */
 export const steppedDeckEntry = (deck: ReadonlyArray<DeckEntry>, currentKey: string | null, step: DeckStep): DeckEntry | null => {
   if (deck.length === 0) return null
   if (step === 'first') return deck[0]!
@@ -312,16 +312,16 @@ export const mountedDeckEntries = (
   deck: ReadonlyArray<DeckEntry>,
 ): ReadonlyArray<DeckEntry> => frames.map(frame => deck.find(entry => entry.key === frame.key) ?? frame.entry)
 
-/** The Plant that instructor actions, procedures and the status dot act on for an entry, or why there is none. */
-export type DeckPlantTarget =
-  | { readonly ok: true; readonly plant: DeckPlant }
+/** The asset its Pack's window tools, procedures and the status dot act on for an entry, or why there is none. */
+export type DeckAssetTarget =
+  | { readonly ok: true; readonly asset: DeckAsset }
   | { readonly ok: false; readonly reason: string }
 
 /**
- * Whether the page has opened the window's Run. Its Plants, their actions and
+ * Whether the page has opened the window's Run. Its assets' tools and
  * procedures need the opened Run; a display does not, since it samples its
  * Run itself, so the window shows displays while the Run opens or after it
- * failed to, and says why the Plant controls are off.
+ * failed to, and says why the tools are off.
  */
 export type DeckRunJoin =
   | { readonly state: 'joining' }
@@ -331,24 +331,23 @@ export type DeckRunJoin =
 const runJoinReason = (join: DeckRunJoin): string | null =>
   join.state === 'joined' ? null : join.state === 'joining' ? 'This Run is still opening' : `This Run could not be opened: ${join.reason}`
 
-export const deckEntryPlant = (entry: DeckEntry, plants: ReadonlyArray<DeckPlant>, join: DeckRunJoin): DeckPlantTarget => {
+export const deckEntryAsset = (entry: DeckEntry, assets: ReadonlyArray<DeckAsset>, join: DeckRunJoin): DeckAssetTarget => {
   if (entry.source === 'answer' && entry.refusal !== null) return { ok: false, reason: `Not a display this window shows: ${entry.refusal}` }
   if (entry.source === 'answer' && entry.otherRun) return { ok: false, reason: 'Belongs to another Run' }
   const waiting = runJoinReason(join)
   if (waiting !== null) return { ok: false, reason: waiting }
-  if (entry.source === 'overview') {
-    const plant = plants.find(candidate => candidate.objectId === entry.plant.objectId)
-    return plant ? { ok: true, plant } : { ok: false, reason: 'The Plant is no longer in this Run' }
+  if (entry.source === 'asset') {
+    const asset = assets.find(candidate => candidate.objectId === entry.asset.objectId)
+    return asset ? { ok: true, asset } : { ok: false, reason: `${entry.asset.label} is no longer in this Run` }
   }
-  const plantId = parseListingState(entry.listing).plantId
-  if (plantId === null) return { ok: false, reason: 'The display names no Plant World can read' }
-  const plant = plants.find(candidate => candidate.plantId === plantId)
-  return plant ? { ok: true, plant } : { ok: false, reason: `Plant ${plantId} is not in this Run` }
+  // An answer's display is about an asset where it names one asset of the Run, and only one.
+  const named = assets.filter(candidate => objectsOf(entry.listing).has(candidate.objectId))
+  return named.length === 1 ? { ok: true, asset: named[0]! } : { ok: false, reason: named.length === 0 ? 'The display names no asset of this Run' : 'The display is about several assets' }
 }
 
-/** Opening the window: on a Plant's overview (rail) or on a listed display (chat). */
+/** Opening the window: on an asset's display (rail) or on a listed display (chat). */
 export type DisplayWindowTarget =
-  | { readonly kind: 'overview'; readonly objectId: string }
+  | { readonly kind: 'asset'; readonly objectId: string }
   | { readonly kind: 'listing'; readonly listing: EmbeddedViewListing }
 
 export interface DisplayWindowRequest {
@@ -357,8 +356,6 @@ export interface DisplayWindowRequest {
   readonly target: DisplayWindowTarget
   /** Opened from the rail: the window takes focus. From chat it must not steal the composer's keys. */
   readonly focus: boolean
-  /** Opened from a Plant card's Instructor row: the window opens its Instructor actions on the Plant shown. */
-  readonly instructorActions: boolean
 }
 
 /** The entry a request opens: the deck's own when present, else the self-contained listing. */
@@ -367,8 +364,8 @@ export const requestedDeckEntry = (
   simulationRunId: string,
   target: DisplayWindowTarget,
 ): DeckEntry | null => {
-  if (target.kind === 'overview') {
-    return deck.find(entry => entry.source === 'overview' && entry.plant.objectId === target.objectId) ?? null
+  if (target.kind === 'asset') {
+    return deck.find(entry => entry.source === 'asset' && entry.asset.objectId === target.objectId) ?? null
   }
   const key = answerDeckKey(target.listing.key)
   return deck.find(entry => entry.key === key) ?? { ...answerDeckEntry(simulationRunId, target.listing), listed: false }

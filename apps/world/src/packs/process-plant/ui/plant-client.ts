@@ -1,7 +1,8 @@
-import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
-import { embeddedViewEnvelopeSchema, type EmbeddedViewEnvelope, type EmbeddedViewPublication } from '@leitbild/contracts'
-import { querySimulationRunCapability } from '../simulation-run-client.ts'
-import { activeWorkspaceId } from '../workspace-context.ts'
+import type { SimulationRunId } from '../../../core/model/index.ts'
+import { querySimulationRunCapability } from '../../../ui/simulation-run-client.ts'
+
+// The Plant's own reads for its UI (the catalog, its artifacts, its
+// credibility evidence), through the Run's capabilities as the screen's actor.
 
 export type ProcessPlantArtifactKind = 'authored-spec' | 'compiled-graph-mermaid'
 
@@ -76,10 +77,6 @@ export interface ProcessPlantCatalog {
   readonly recordingProfiles: ReadonlyArray<ProcessPlantCatalogEntry>
   readonly credibilityEvidence: ReadonlyArray<ProcessPlantCatalogEntry>
 }
-
-export const processPlantIdForObject = (
-  object: Pick<OperationalObject, 'id' | 'packId'>,
-): string | null => object.packId === 'process-plant' ? String(object.id) : null
 
 export type ProcessPlantCredibilityArtifactLanguage = 'json' | 'svg'
 
@@ -320,21 +317,4 @@ export const readProcessPlantArtifact = async (
       overviewComponentCount: assertNumber(metadata.overviewComponentCount, 'process plant artifact metadata requires overviewComponentCount'),
     },
   }
-}
-
-/**
- * The unit overview World generates for a Plant, as the embedded view the
- * process display window frames. The Run is the view's subject, as for a
- * display shown below an agent's answer.
- */
-export const readUnitOverviewView = async (
-  simulationRunId: SimulationRunId,
-  plantId: string,
-): Promise<EmbeddedViewEnvelope> => {
-  const result = await querySimulationRunCapability<{ readonly view: EmbeddedViewPublication }>(simulationRunId, 'world.process-plant.display.overview', { plantId })
-  return embeddedViewEnvelopeSchema.parse({
-    moduleId: 'world',
-    subject: { workspaceId: activeWorkspaceId(), moduleId: 'world', type: 'world.simulation-run', id: simulationRunId },
-    ...result.view,
-  })
 }

@@ -1318,8 +1318,14 @@ body.rail-resizing {
   user-select: none;
 }
 
+/* A dialog a Pack's window tools open from the header is the page's: its text selects and its buttons are its own. */
+.display-window-header [role="dialog"] {
+  user-select: text;
+}
+
 .display-window-nav,
 .display-window-zoom,
+.display-window-procedures,
 .display-window-plant {
   flex: 0 0 auto;
   display: flex;
@@ -1327,6 +1333,7 @@ body.rail-resizing {
   gap: 2px;
 }
 
+.display-window-procedures,
 .display-window-plant {
   gap: 4px;
 }
@@ -1378,7 +1385,7 @@ body.rail-resizing {
   background: transparent;
 }
 
-.display-window-header button,
+.display-window-header button:not([role="dialog"] *),
 .display-window-popover button {
   height: 30px;
   min-width: 30px;
@@ -1398,28 +1405,28 @@ body.rail-resizing {
   cursor: pointer;
 }
 
-.display-window-header button:hover:not(:disabled):not([aria-disabled="true"]),
+.display-window-header button:hover:not(:disabled):not([aria-disabled="true"]):not([role="dialog"] *),
 .display-window-popover button:hover:not(:disabled):not([aria-disabled="true"]) {
   color: var(--text);
   background: color-mix(in srgb, var(--border) 45%, transparent);
 }
 
-.display-window-header button:disabled,
-.display-window-header button[aria-disabled="true"],
+.display-window-header button:disabled:not([role="dialog"] *),
+.display-window-header button[aria-disabled="true"]:not([role="dialog"] *),
 .display-window-popover button:disabled,
 .display-window-popover button[aria-disabled="true"] {
   opacity: 0.42;
   cursor: default;
 }
 
-.display-window-header button:focus-visible,
+.display-window-header button:focus-visible:not([role="dialog"] *),
 .display-window-popover button:focus-visible,
 .display-window-slider:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.display-window-header button[aria-pressed="true"],
+.display-window-header button[aria-pressed="true"]:not([role="dialog"] *),
 .display-window-popover button[aria-pressed="true"] {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);

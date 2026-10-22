@@ -6,7 +6,7 @@
     readProcessPlantCredibilityArtifact,
     type ProcessPlantCredibilityArtifact,
     type ProcessPlantCredibilityEvidence,
-  } from '../../../ui/process-display/process-display-client.ts'
+  } from './plant-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId

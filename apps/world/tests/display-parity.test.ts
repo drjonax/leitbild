@@ -28,23 +28,29 @@ const faceplates = await Bun.file(join(import.meta.dir, 'fixtures/display-parity
 const declaration = plantDeclaration(PLANT_ID as never, plantModel(), null)
 const declared = new Map(declaration.observables.map(observable => [observable.ref, observable]))
 const ref = (path: string): string => `${PLANT_ID}#${path}`
-const read = (instance: ProcessPlantRuntimeInstance, refs: ReadonlyArray<string>): ReadonlyMap<string, Observation> => new Map(((answerProcessPlantObservationQuery({
-  request: { capabilityId: 'world.process-plant.observation.read', input: { refs } }, plants: new Map([[PLANT_ID, instance]]), simulationTime: SIMULATION_TIME, recording: null,
-}) as { readonly observations: ReadonlyArray<Observation> }).observations).map(observation => [observation.ref, observation]))
+const READ_AT_ONCE = 64
+const read = (instance: ProcessPlantRuntimeInstance, refs: ReadonlyArray<string>): ReadonlyMap<string, Observation> => new Map(Array.from({ length: Math.ceil(refs.length / READ_AT_ONCE) }, (_, at) => refs.slice(at * READ_AT_ONCE, (at + 1) * READ_AT_ONCE))
+  .flatMap(chunk => (answerProcessPlantObservationQuery({
+    request: { capabilityId: 'world.process-plant.observation.read', input: { refs: chunk } }, plants: new Map([[PLANT_ID, instance]]), simulationTime: SIMULATION_TIME, recording: null,
+  }) as { readonly observations: ReadonlyArray<Observation> }).observations).map(observation => [observation.ref, observation]))
 
 /**
- * Listed differences in what an item's state reads (P1): the new path says the state in its controls' words (the
- * drawing's popover header said the aspect's word), and a valve between its ends reads "part open", its opening on
- * its position binding.
+ * Listed differences in what an item's state reads (P1, P1b): the new path says the state in its controls' words (the
+ * drawing's popover header said the aspect's word: running, energized), and a valve between its ends reads "part
+ * open", its opening on its position binding. The command it does not follow is the reading's why, in those words.
  */
-const STATE_WORDS: Readonly<Record<string, string>> = { running: 'RUN', stopped: 'STOP' }
+const STATE_WORDS: Readonly<Record<string, string>> = { running: 'RUN', stopped: 'STOP', energized: 'LIVE', dead: 'DEAD' }
 const stateWord = (old: string, labels: ReadonlyArray<string>): string => {
   const word = old.split(';')[0]!.trim()
   if (/^\d+ % open$/.test(word)) return 'part open'
   if (word === 'closed' && labels.includes('SHUT')) return 'SHUT'
   return STATE_WORDS[word] ?? word.toUpperCase()
 }
-
+/** The command the old word said the item does not follow ("stopped; commanded to run", "35 % open; commanded shut disagrees"), in the new words. */
+const commandedWord = (old: string): string | null => {
+  const commanded = old.match(/commanded (?:to )?(\w+)/)?.[1]
+  return commanded === undefined ? null : `commanded ${STATE_WORDS[commanded === 'run' ? 'running' : commanded === 'stop' ? 'stopped' : commanded] ?? commanded.toUpperCase()}`
+}
 /** controls.list's items as T01 recorded them. */
 const listedFacts = (items: ReadonlyArray<any>) => items.map(item => ({
   id: item.id,
@@ -91,7 +97,7 @@ describe('T39 plant swap parity', () => {
             const labels = observable.states!.map(stated => stated.label)
             const word = entry.slice(entry.indexOf(':') + 1)
             expect([id, observable.states!.find(stated => stated.value === observation.value)?.label]).toEqual([id, stateWord(word, labels)])
-            expect([id, observation.why ?? null]).toEqual([id, word.includes('commanded') ? `commanded ${word.match(/commanded (\w+)/)![1]!.toUpperCase()}` : null])
+            expect([id, observation.why ?? null]).toEqual([id, commandedWord(word)])
           }
         })
       })
@@ -162,5 +168,21 @@ const UNLIMITED_RULES: ReadonlyArray<string> = [
   'turbine: reactor-trip-turbine-trip', 'turbine: turbine-trip-on-loss-of-load', 'turbine: turbine-manual-trip',
 ]
 
-/** P8: the listings the window opens, as T01 recorded them (re-baselined when the window shows vignettes only). */
-const LISTINGS = record.listings
+/**
+ * P8: the listings the window opens, as T01 recorded them, with a vignette where the process display was. Listed: the
+ * old path's process display, deleted at the swap, now opens to say this window does not show it.
+ */
+const { 'a process display about a Run of this Workspace': processDisplay, ...unchanged } = record.listings
+const LISTINGS = {
+  ...unchanged,
+  'a vignette about a Run of this Workspace': processDisplay,
+  'a process display of the old path': { opens: true, shown: false, reason: 'it is a process-plant.display view, which this window does not show' },
+}
+
+/**
+ * Differences the lead ruled accepted (D3), held by the tests named: the old drawing's symbol badges (a pending
+ * proposal's mark on its item) are gone with the drawing they sat on, so a proposal reaches its item through the
+ * window's chip and the element pop-over carries its card (process-plant-proposal-characterization); the chip lists
+ * each pending proposal as "<action> · expires hh:mm:ss" (operation-presenter); and the old composed view, unoperated
+ * from D2 until its deletion here, is gone.
+ */

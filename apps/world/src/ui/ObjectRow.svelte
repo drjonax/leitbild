@@ -6,7 +6,7 @@
   import IconButton from './components/IconButton.svelte'
   import InlineConfirmation from './components/InlineConfirmation.svelte'
   import StatusIndicator from './components/StatusIndicator.svelte'
-  import { processPlantIdForObject } from './process-display/process-display-client.ts'
+  import { processPlantIdForObject } from '../packs/process-plant/model.ts'
   import ProcedureRunBadges from './procedures/ProcedureRunBadges.svelte'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from './procedures/procedure-run-selectors.ts'
 

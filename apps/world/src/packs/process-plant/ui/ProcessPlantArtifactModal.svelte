@@ -8,7 +8,7 @@
     type ProcessPlantArtifactComponent,
     type ProcessPlantArtifactKind,
     type ProcessPlantArtifactSourceLink,
-  } from '../../../ui/process-display/process-display-client.ts'
+  } from './plant-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId
