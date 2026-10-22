@@ -6,6 +6,7 @@ import type { PackRuntimeQuery, PackRuntimeRecordedHistory } from '../../../simu
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { declarationRevision, plantDeclaration, type PlantRecording } from './declarations.ts'
 import { leadPaths, readPlant } from './read.ts'
+import { plantNowOf } from '../ic/key-values.ts'
 import { servedPlantTopology } from './topology.ts'
 
 /** The Plant's observation Capabilities (WorldPack.observation): World core defines their shapes. */
@@ -27,9 +28,11 @@ export const answerProcessPlantObservationQuery = (config: {
     const input = observationShapes.declarations.input.parse(config.request.input)
     return {
       declarations: input.objectIds.map(objectId => {
-        const plant = plantOf(objectId).plant
-        const revision = declarationRevision(plant, config.recording)
-        return input.known?.[objectId] === revision ? { objectId, revision, unchanged: true as const } : plantDeclaration(objectId, plant, config.recording, input.elementIds)
+        const system = plantOf(objectId)
+        // The elements' lead lists follow the operating mode the unit is in, never its live state (Q22).
+        const mode = plantNowOf(system).mode
+        const revision = declarationRevision(system.plant, config.recording, mode)
+        return input.known?.[objectId] === revision ? { objectId, revision, unchanged: true as const } : plantDeclaration(objectId, system.plant, config.recording, input.elementIds, mode)
       }),
     }
   }

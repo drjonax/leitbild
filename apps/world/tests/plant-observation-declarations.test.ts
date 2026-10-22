@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { recordingSeriesIdFor, type ObjectId } from '../src/core/model/index.ts'
 import { observationDeclarationSchema, type ObservationDeclaration } from '../src/core/observation/capabilities.ts'
-import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { compileProcessPlant, createProcessPlantRuntime, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import type { CompiledProcessPlant } from '../src/packs/process-plant/plant-compiler.ts'
-import { plantDeclaration, type PlantRecording } from '../src/packs/process-plant/observation/declarations.ts'
+import { declarationRevision, plantDeclaration, type PlantRecording } from '../src/packs/process-plant/observation/declarations.ts'
 import { answerProcessPlantObservationQuery, processPlantObservationCapabilityIds } from '../src/packs/process-plant/observation/query.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
@@ -170,16 +170,18 @@ describe('plant observation declarations (P2)', () => {
   })
 
   test('the Capability answers a known revision unchanged and narrows to named elements', () => {
-    const plants = new Map([[objectId, { plant } as unknown as ProcessPlantRuntimeInstance]])
+    const plants = new Map([[objectId, { plant, runtime: createProcessPlantRuntime({ system: plant }) } as unknown as ProcessPlantRuntimeInstance]])
     const ask = (input: unknown) => answerProcessPlantObservationQuery({ request: { capabilityId: processPlantObservationCapabilityIds.declarations, input }, plants, recording }) as { declarations: ReadonlyArray<any> }
-    expect(ask({ objectIds: [objectId], known: { [objectId]: declaration.revision } }).declarations).toEqual([{ objectId, revision: declaration.revision, unchanged: true }])
+    // Its revision names the mode's lead lists (Q22): at its initial state the unit is in power operation.
+    const revision = declarationRevision(plant, recording, 'powerOperation')
+    expect(ask({ objectIds: [objectId], known: { [objectId]: revision } }).declarations).toEqual([{ objectId, revision, unchanged: true }])
     const narrowed = ask({ objectIds: [objectId], elementIds: ['pressurizer'] }).declarations[0]
     expect(narrowed.elements.map((element: { id: string }) => element.id)).toEqual(['pressurizer'])
     expect(narrowed.observables.every((entry: { element: string }) => entry.element === 'pressurizer')).toBe(true)
     // The relief and block valves the pressurizer bundles are elements of their own: their state, position, demand and flow are theirs.
     expect(narrowed.observables.filter((entry: { ref: string }) => entry.ref.endsWith('.state'))).toEqual([])
     const relief = ask({ objectIds: [objectId], elementIds: ['pressurizer.reliefValve'] }).declarations[0]
-    expect(relief.elements).toEqual([{ id: 'pressurizer.reliefValve', class: 'reliefValve', label: 'PORV', shortLabel: 'PORV' }])
+    expect(relief.elements).toEqual([{ id: 'pressurizer.reliefValve', class: 'reliefValve', label: 'PORV', shortLabel: 'PORV', parent: 'pressurizer' }])
     expect(relief.observables.map((entry: { ref: string }) => entry.ref.slice(objectId.length + 1)).sort()).toEqual(RELIEF_VALVE_PATHS)
     expect(() => ask({ objectIds: ['plant:nowhere'] })).toThrow('No Process Plant plant:nowhere in this Run')
   })

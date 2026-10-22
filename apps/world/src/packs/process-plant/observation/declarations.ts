@@ -9,6 +9,7 @@ import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
 import { icThresholdsForSignal, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
 import { derivedObservables } from './derived.ts'
+import { elementLeads, leadDigest } from './leads.ts'
 
 // What a Plant declares to World's observation layer (plan v3.1 §2.2, A1):
 // every signal it publishes and every signal the Run records, addressed
@@ -183,8 +184,15 @@ const observableOf = (objectId: ObjectId, plant: CompiledProcessPlant, recording
 
 const revisions = new WeakMap<ReadonlySet<string>, WeakMap<CompiledProcessPlant, string>>()
 
-/** Changes whenever what is declared does: the Plant's model digest and what the Run records of it (one Run's series set is fixed). */
-export const declarationRevision = (plant: CompiledProcessPlant, recording: PlantRecording): string => {
+/**
+ * Changes whenever what is declared does: the Plant's model digest, what the Run records of it (one Run's series set is
+ * fixed) and, where the operating mode is given, its elements' lead lists in that mode (a digest: the lists depend on
+ * the mode only, so a trip changes nothing here and the compose caches hold).
+ */
+export const declarationRevision = (plant: CompiledProcessPlant, recording: PlantRecording, mode?: string | null): string =>
+  `${recordedRevision(plant, recording)}${mode === undefined ? '' : `:lead-${leadDigest(plant, mode)}`}`
+
+const recordedRevision = (plant: CompiledProcessPlant, recording: PlantRecording): string => {
   if (recording === null) return `${plant.modelDigest}:unrecorded`
   const known = revisions.get(recording.seriesIds) ?? new WeakMap<CompiledProcessPlant, string>()
   revisions.set(recording.seriesIds, known)
@@ -196,32 +204,46 @@ export const declarationRevision = (plant: CompiledProcessPlant, recording: Plan
 
 const declarationCache = new WeakMap<CompiledProcessPlant, Map<string, ObservationDeclaration>>()
 
-/** The Plant's declaration: its equipment and lines as elements, and its observables (its signals, then those derived.ts reads); only those on `elementIds` where named. */
-export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant, recording: PlantRecording, elementIds?: ReadonlyArray<string>): ObservationDeclaration => {
-  const revision = declarationRevision(plant, recording)
+/**
+ * The Plant's declaration: its equipment and lines as elements, and its observables (its signals, then those
+ * derived.ts reads); only those on `elementIds` where named. Given the operating mode, each component leads with its
+ * equipment key values in that mode (leads.ts, Q22), and each device it bundles names it as its parent.
+ */
+export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant, recording: PlantRecording, elementIds?: ReadonlyArray<string>, mode?: string | null): ObservationDeclaration => {
+  const revision = declarationRevision(plant, recording, mode)
   const known = declarationCache.get(plant) ?? new Map<string, ObservationDeclaration>()
   declarationCache.set(plant, known)
   const whole = known.get(revision) ?? (() => {
     const graph = plant.graph
+    const observables = [
+      ...graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
+      ...derivedObservables(objectId, plant),
+    ]
+    const declared = new Set(observables.map(observable => observable.ref))
+    const leads: ReadonlyMap<string, ReadonlyArray<string>> = mode === undefined ? new Map() : elementLeads(plant, mode)
+    // What a component's detail leads with, as declared values only, each once, at most 16.
+    const leadOf = (id: string): Array<string> => [...new Set((leads.get(id) ?? []).map(path => `${objectId}#${path}`).filter(ref => declared.has(ref)))].slice(0, 16)
     const declaration: ObservationDeclaration = {
       objectId,
       revision,
-      observables: [
-        ...graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
-        ...derivedObservables(objectId, plant),
-      ],
+      observables,
       elements: [
-        ...graph.components.map(component => ({
-          id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
-          ...(component.metadata?.presentation?.shortLabel === undefined ? {} : { shortLabel: component.metadata.presentation.shortLabel }),
-          ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
-        })),
+        ...graph.components.map(component => {
+          const lead = leadOf(String(component.id))
+          return {
+            id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
+            ...(component.metadata?.presentation?.shortLabel === undefined ? {} : { shortLabel: component.metadata.presentation.shortLabel }),
+            ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
+            ...(lead.length === 0 ? {} : { lead }),
+          }
+        }),
         // A device its equipment bundles (the pressurizer's relief and block valves) is an element of its own, drawn on its line.
         ...graph.components.flatMap(component => component.semantics.embedded.map(device => {
           const label = equipmentItemLabel(component, device)
           return {
             id: `${component.id}.${device.id}`, class: device.id, label, ...(label.length > 24 ? {} : { shortLabel: label }),
             ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
+            parent: String(component.id),
           }
         })),
         ...graph.links.map(link => {
