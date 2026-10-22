@@ -5,7 +5,7 @@
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
   import { hostDisplayFrame } from '../view-host.ts'
   import { worstChip } from './alerts.ts'
-  import { clockText, underTitle } from './format.ts'
+  import { clockText, provenanceMark, underTitle } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
   import { toneOf, valueLook } from './readout.ts'
   import { createVignetteSession, sampleStale, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
@@ -17,7 +17,10 @@
   // the Assistant composed it and the worst it shows; its sections, each
   // within the rows the composer allotted; and a footer saying whether it is
   // LIVE, PAUSED (the Run's clock stopped) or FROZEN (nothing updates: the
-  // Run is gone or not loaded, or its samples fail), with the Run's time.
+  // Run is gone or not loaded, or its samples fail), with the Run's time, and
+  // what it is: generated from the model or AI-composed, never an operating
+  // display (provenanceMark), in the window, inline in chat and in a
+  // procedure tag's dialog alike.
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
 
   let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), sampleError: null })
@@ -95,6 +98,7 @@
     <span class={`clock ${footer.word.toLowerCase()}`}>{footer.word}</span>
     {#if latest !== undefined}<span>{latest.at.clock === 'simulation' ? 'sim' : 'wall'} {clockText(latest.at.at)}</span>{/if}
     {#if footer.why !== undefined}<span class="why">{footer.why}</span>{/if}
+    <span class="mark">{provenanceMark(view)}</span>
   </footer>
 </article>
 
@@ -115,5 +119,7 @@
   .clock { font-weight: 700; letter-spacing: 0.04em; color: var(--element-active-color); }
   .clock.frozen { color: var(--element-neutral-color); }
   .chips { gap: 12px; overflow: hidden; }
-  .why { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* Where the row is short, the reason a sample froze gives way before the mark does. */
+  .why { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .mark { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 </style>

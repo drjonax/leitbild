@@ -27,3 +27,11 @@ export const durationText = (seconds: number): string => { const parts = duratio
 
 /** A distance as the card writes it: metres under a kilometre, else kilometres. */
 export const distanceText = (metres: number): string => { const parts = distanceParts(metres); return `${parts.value} ${parts.unit}` }
+
+/**
+ * What every vignette's footer says it is, beside its clock: a view World generated from the model, or one the
+ * Assistant composed; never an operating display. Until its view is read, only the latter.
+ */
+export const provenanceMark = (view: { readonly by?: 'assistant' } | undefined): string =>
+  view === undefined ? 'not an operating display'
+    : view.by === 'assistant' ? 'AI-composed view · not an operating display' : 'Generated from the model · not an operating display'

@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AlertState } from '../src/core/model/alerts.ts'
 import type { ObjectId } from '../src/core/model/ids.ts'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
 import { alertDetail, alertIcon, sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
-import { quantityText } from '../src/ui/embed/vignette/format.ts'
+import { provenanceMark, quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
 import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
@@ -197,5 +199,17 @@ describe('alerts', () => {
     expect(sectionLines(rows, { objectIds: ['one'], elements: ['pump-a'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-pump'])
     expect(sectionLines(rows, { objectIds: ['one'], refs: ['one#level'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-level'])
     expect(sectionLines(rows, { objectIds: ['one'], elements: ['pump-a'], refs: ['one#level'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-pump', 'on-level'])
+  })
+})
+
+describe('footer', () => {
+  test('every vignette says it is not an operating display, and whether World generated it from the model or the Assistant composed it', () => {
+    expect(provenanceMark({})).toBe('Generated from the model · not an operating display')
+    expect(provenanceMark({ by: 'assistant' })).toBe('AI-composed view · not an operating display')
+    // Before its view is read, it does not yet say who made it.
+    expect(provenanceMark(undefined)).toBe('not an operating display')
+    // The frame every host shows (the window, a chat answer inline, a procedure tag's dialog) writes it in its footer.
+    const frame = readFileSync(join(import.meta.dir, '../src/ui/embed/vignette/Vignette.svelte'), 'utf8')
+    expect(frame.slice(frame.indexOf('<footer'), frame.indexOf('</footer>'))).toContain('{provenanceMark(view)}')
   })
 })
