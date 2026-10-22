@@ -105,7 +105,7 @@ describe('generic topology scope', () => {
     expect(reached(true)).toEqual(['north', 'middle'])
   })
 
-  test('asked (a vignette), a node every scoped edge of which joins drawn nodes is drawn, not named at a stop on each side', () => {
+  test('asked (a vignette), a node joined to drawn nodes from two sides, by every edge of the media joining it, is drawn, not named at a stop on each side', () => {
     // A vessel relieves through a block valve and a relief valve, and through its safety valves, into a header and a
     // tank. Around the header one link out, the relief and safety valves are drawn and the vessel is too (where that
     // flow starts); the block valve between the vessel and the relief valve is not reached.
@@ -132,7 +132,18 @@ describe('generic topology scope', () => {
     expect(scoped({ around: ['header'], reach: 1 })).toEqual({ nodes: ['vessel', 'reliefValve', 'safetyValve', 'header', 'tank'], named: ['block', 'block'] })
     // Asked: it is drawn with its two links, and nothing is named twice.
     expect(scoped({ around: ['header'], reach: 1, between: true })).toEqual({ nodes: ['vessel', 'block', 'reliefValve', 'safetyValve', 'header', 'tank'], named: [] })
-    // Where one of its scoped links joins a node not drawn (its motor's supply, power named), it stays a stop.
-    expect(scoped({ around: ['header'], reach: 1, media: ['water', 'power'], between: true }).nodes).not.toContain('block')
+    // Its motor's supply, power named, does not join it to the drawing: it is drawn all the same, and the supply stops
+    // the drawing at it, naming the bus once.
+    expect(scoped({ around: ['header'], reach: 1, media: ['water', 'power'], between: true })).toEqual({ nodes: ['vessel', 'block', 'reliefValve', 'safetyValve', 'header', 'tank'], named: ['bus'] })
+    // A node joined by one medium where another of its edges in that medium leads elsewhere stays a stop: a second
+    // outlet of the block valve to a drain not drawn.
+    const drained: TopologyGraph = topologyGraphSchema.parse({
+      ...relief,
+      nodes: [...relief.nodes.map(entry => entry.id === 'block' ? { ...entry, ports: [...entry.ports, { id: 'drain', rank: 'drain', media: ['water'], direction: 'out', circuit: 'w' }] } : entry), node('drain', [water('in', 'in')])],
+      edges: [...relief.edges, pipe('block-drain', 'block.drain', 'drain.in')],
+    })
+    const stopped = scopeTopology(drained, { around: ['header'], reach: 1, between: true })
+    if (!stopped.ok) throw new Error(JSON.stringify(stopped.refusal))
+    expect(stopped.scoped.nodes).toEqual(['vessel', 'reliefValve', 'safetyValve', 'header', 'tank'])
   })
 })
