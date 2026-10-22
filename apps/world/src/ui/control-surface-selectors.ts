@@ -1,4 +1,4 @@
-import type { OperationalObject } from '../core/model/index.ts'
+import type { ObjectId, OperationalObject } from '../core/model/index.ts'
 import type { PackCreateObjectType, PackTargetContext } from '../core/packs/protocol.ts'
 import type { ActivePackViews } from '../core/packs/active-views.ts'
 import type { IconName } from './icons.ts'
@@ -12,7 +12,7 @@ export interface PlacementCursor {
 
 export const selectedControllerObjectFor = (
   objects: ReadonlyArray<OperationalObject>,
-  selectedControllerId: string | null,
+  selectedControllerId: ObjectId | null,
   pack: ActivePackViews,
   context: PackTargetContext,
 ): OperationalObject | null =>

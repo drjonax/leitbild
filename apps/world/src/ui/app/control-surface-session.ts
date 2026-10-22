@@ -1,4 +1,4 @@
-import type { SimulationRunId, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
+import type { SimulationRunId, ObjectId, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
 import type { ActivePackViews } from '../../core/packs/active-views.ts'
 import type { PackSurfacePanelContribution, PackTargetContext } from '../../core/packs/protocol.ts'
 import { startingControllerId } from '../surface-panel-interaction.ts'
@@ -16,7 +16,7 @@ export interface ControlSurfaceSnapshotStartupConfig {
   readonly setScenarioState: (state: ScenarioExecutionState | undefined) => void
   readonly setClock: (clock: SimulationClockState | undefined) => void
   readonly setExpectedRealtimeScenarioId: (scenarioId: string) => void
-  readonly setSelectedControllerId: (id: string | null) => void
+  readonly setSelectedControllerId: (id: ObjectId | null) => void
   /** The targeting context of this screen for a snapshot's objects. */
   readonly targetContext: (objects: ReadonlyArray<OperationalObject>) => PackTargetContext
   /** Whether a surface panel is open; an open map-target panel owns the selection. */

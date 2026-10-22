@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { objectIdSchema } from '../src/core/model/index.ts'
 import type { PackCreateObjectType } from '../src/core/packs/protocol.ts'
 import {
   categoryRowsFor,
@@ -68,7 +69,7 @@ describe('control surface selectors', () => {
     expect(fixturePack.targeting).toBeUndefined()
     expect(selectedControllerObjectFor(objects, unit.id, fixtureViews, { objects })).toBeNull()
     expect(selectedControllerObjectFor(objects, site.id, fixtureViews, { objects })).toBeNull()
-    expect(selectedControllerObjectFor(objects, 'object:missing', fixtureViews, { objects })).toBeNull()
+    expect(selectedControllerObjectFor(objects, objectIdSchema.parse('object:missing'), fixtureViews, { objects })).toBeNull()
   })
 
   test('creates placement cursor data and rejects unknown pack icons visibly', () => {

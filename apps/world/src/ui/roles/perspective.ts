@@ -1,4 +1,4 @@
-import type { CompiledScenario, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
+import type { CompiledScenario, ObjectId, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
 import { runRolesOf } from '../../core/model/index.ts'
 import { noteAction, type CommandFeedback } from '../command-feedback.ts'
 import { roleSetText } from './role-controller.ts'
@@ -59,7 +59,7 @@ export interface RunScopedStores {
   readonly objects: ReadonlyArray<OperationalObject>
   readonly scenarioState: ScenarioExecutionState | undefined
   readonly clock: SimulationClockState | undefined
-  readonly selectedControllerId: string | null
+  readonly selectedControllerId: ObjectId | null
   readonly seenRevisions: ReadonlyMap<string, number>
   readonly packDataRevisions: Readonly<Record<string, number>>
   readonly packPanelSelections: Readonly<Record<string, string | null>>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { workspaceIdSchema } from '@leitbild/contracts'
-import { runRolesOf, type CompiledScenario, type OperationalObject, type RunRoles, type SimulationRunId } from '../src/core/model/index.ts'
+import { objectIdSchema, runRolesOf, type CompiledScenario, type OperationalObject, type RunRoles, type SimulationRunId } from '../src/core/model/index.ts'
 import {
   createRealtimeConnectionController,
   staleRefusalMessage,
@@ -208,7 +208,7 @@ describe('perspective epochs', () => {
     // The screen then works in that perspective and names the Red unit.
     stores = {
       ...stores,
-      selectedControllerId: 'red-1',
+      selectedControllerId: objectIdSchema.parse('red-1'),
       packDataRevisions: { fixture: 4 },
       packPanelSelections: { 'fixture.board': 'red-1' },
       commandFeedback: beginAction(stores.commandFeedback, 'Deleting red-1').feedback,

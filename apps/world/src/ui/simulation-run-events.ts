@@ -117,20 +117,20 @@ export type SimulationRunWebSocketMessage =
 
 interface ObjectApplicationResult {
   readonly objects: ReadonlyArray<OperationalObject>
-  readonly selectedControllerId: string | null
+  readonly selectedControllerId: ObjectId | null
   readonly changed: boolean
   readonly routesChanged: boolean
 }
 
 export interface ObjectSelectionState {
   readonly objects: ReadonlyArray<OperationalObject>
-  readonly selectedControllerId: string | null
-  readonly scenarioState?: ScenarioExecutionState
+  readonly selectedControllerId: ObjectId | null
+  readonly scenarioState?: ScenarioExecutionState | undefined
 }
 
 export interface ObjectSelectionUpdate {
   readonly objects: ReadonlyArray<OperationalObject>
-  readonly selectedControllerId: string | null
+  readonly selectedControllerId: ObjectId | null
 }
 
 export interface SimulationRunEventApplication {
