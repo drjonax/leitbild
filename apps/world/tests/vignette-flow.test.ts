@@ -10,8 +10,9 @@ import { groupName, type TopologyLayout } from '../src/features/displays/topolog
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
-import { derivedObservables, insertedShare, readDerived } from '../src/packs/process-plant/observation/derived.ts'
+import { commandNotFollowed, derivedObservables, insertedShare, readDerived } from '../src/packs/process-plant/observation/derived.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
+import { plantControlsFor } from '../src/packs/process-plant/operations/controls.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { flowDrawing, glyphOf, symbolOf } from '../src/ui/embed/vignette/flow-symbols.ts'
 import { vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
@@ -250,8 +251,9 @@ describe('flow symbols', () => {
 
 describe('text room (UX audit #68; plan §5.5, containment)', () => {
   // Every line a drawn item writes stays inside the box its layout kept for it, at the sizing's width a character:
-  // its name, its state word, and each reading at the longest value the sizing reserves a reading for, a level's
-  // with its word before it ("LVL 100.0 %" ran one character past its box). Generic: every item of the declared
+  // its name, its state word or the command it does not follow ("commanded RUN" ran 32 px past the RCPs' boxes on
+  // Run A), and each reading at the longest value the sizing reserves a reading for, a level's with its word before
+  // it ("LVL 100.0 %" ran one character past its box). Generic: every item of the declared
   // overview at two to four loops and of the neighbourhoods an element's default draws.
   type Declared = Pick<Observable, 'quantity' | 'unit' | 'states'>
   /** A value whose reading takes all of the characters the sizing reserves for a value (READING_CHARACTERS). */
@@ -270,19 +272,31 @@ describe('text room (UX audit #68; plan §5.5, containment)', () => {
     const declared = new Map(plantDeclaration(objectId as never, plant, null).observables.map(observable => [observable.ref, observable]))
     const scoped = request === 'overview' ? overviewOf(served)! : (() => { const result = scopeTopology(served, request); if (!result.ok) throw new Error(result.refusal.code); return result.scoped })()
     const section = topologySection(objectId, 'process-plant', scoped, flowLayout(scoped, ROOM)!, 37, ref => declared.get(ref)) as Topology
-    const observations = section.nodes.flatMap(node => node.bindings.flatMap(binding => {
-      const state = longestState(binding)
-      return [observation(binding.ref, state ?? widest(binding))]
-    }))
-    const drawing = flowDrawing(section, observations, [], false)
-    return drawing.texts.flatMap(text => [
-      ...(text.x < 0 || text.x + text.width > drawing.width ? [`${text.id}: its box leaves the drawing`] : []),
-      ...text.lines.filter(line => line.text.length * FLOW_TEXT_LINE.perCharacter > text.width)
-        .map(line => `${text.id}: "${line.text}" needs ${line.text.length * FLOW_TEXT_LINE.perCharacter} px of its ${text.width}`),
-    ])
+    // Each state at its longest word, then each item not following a command to either end of its travel, which
+    // stands in its state word's place (derived.ts commandNotFollowed); every reading at its longest.
+    const read = (state: (binding: Topology['nodes'][number]['bindings'][number]) => Observation | null) =>
+      section.nodes.flatMap(node => node.bindings.map(binding => (binding.states === undefined ? null : state(binding)) ?? observation(binding.ref, widest(binding))))
+    // The items whose state can stand apart from their command: a control commands it and it travels (derived.ts unfollowed).
+    const commandable = new Set(plantControlsFor(plant).items.filter(item => {
+      const component = plant.graph.components[item.item.component]!
+      const device = item.item.kind === 'device' ? component.semantics.embedded.find(candidate => item.item.kind === 'device' && candidate.id === item.item.device) : undefined
+      return (device?.aspects ?? component.semantics.aspects).some(aspect => aspect.command !== undefined && aspect.travel !== undefined)
+    }).map(item => `${objectId}#${item.id}.state`))
+    const commanded = (end: 'on' | 'off') => (binding: Topology['nodes'][number]['bindings'][number]): Observation | null => {
+      const wanted = binding.states!.find(state => state.value === (end === 'on' ? 'off' : 'on'))
+      return wanted === undefined || !commandable.has(binding.ref) ? null : { ...observation(binding.ref, end), why: commandNotFollowed(wanted.label) }
+    }
+    return [read(binding => observation(binding.ref, longestState(binding)!)), read(commanded('on')), read(commanded('off'))].flatMap(observations => {
+      const drawing = flowDrawing(section, observations, [], false)
+      return drawing.texts.flatMap(text => [
+        ...(text.x < 0 || text.x + text.width > drawing.width ? [`${text.id}: its box leaves the drawing`] : []),
+        ...text.lines.filter(line => line.text.length * FLOW_TEXT_LINE.perCharacter > text.width)
+          .map(line => `${text.id}: "${line.text}" needs ${line.text.length * FLOW_TEXT_LINE.perCharacter} px of its ${text.width}`),
+      ])
+    })
   }
 
-  test('every line an item writes fits its box: names, state words, and readings with their word, at their longest', () => {
+  test('every line an item writes fits its box: names, state words or the command not followed, and readings with their word, at their longest', () => {
     for (const loops of [2, 3, 4]) expect(outside(`plant:room-${loops}`, 'overview', loops)).toEqual([])
     const around: ReadonlyArray<readonly [string, number]> = [['sgA', 1], ['pressurizer', 1], ['condenser', 2], ['turbine', 3], ['safetyBusA', 2], ['feedwaterTank', 3], ['rcpA', 2]]
     for (const [element, reach] of around) {

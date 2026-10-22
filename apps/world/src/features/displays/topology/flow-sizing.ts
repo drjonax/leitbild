@@ -28,8 +28,8 @@ const GRID = 24
 export const FLOW_TEXT_LINE = { height: 16, perCharacter: 8 } as const
 export const READING_CHARACTERS = 10
 const readingCharacters = (word: string | null): number => READING_CHARACTERS + (word === null ? 0 : word.length + 1)
-/** A state word ("ON LINE", "part open"), or in its place the command the item does not follow ("CMD RUN"). */
-const STATE_CHARACTERS = 9
+/** A state word ("ON LINE", "part open"), or in its place the command the item does not follow ("CMD RUN", "CMD CLOSED"). */
+export const STATE_CHARACTERS = 10
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */
 const VESSEL_ENDS = { top: 2 * GRID, bottom: GRID }
 

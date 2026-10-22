@@ -71,7 +71,7 @@ describe('the pressurizer PORV', () => {
     expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(1)
 
     // The PORV's state says it is open and that its demand disagrees.
-    expect(plantRun.stateOf('pressurizer.reliefValve')).toEqual({ word: 'OPEN', why: 'commanded SHUT' })
+    expect(plantRun.stateOf('pressurizer.reliefValve')).toEqual({ word: 'OPEN', why: 'CMD SHUT' })
   })
 
   test('a partly failed PORV reads the opening it fails to', () => {
@@ -106,7 +106,7 @@ describe('breakers', () => {
     expect(plantRun.tag('BRK-OFFSITE-A-POS')).toBe(false)
     expect(plantRun.tag('BRK-OFFSITE-B-POS')).toBe(true)
     expect(plantRun.read('offsiteBreakerA.energized')).toBe(false)
-    expect(plantRun.stateOf('offsiteBreakerA')).toEqual({ word: 'OPEN', why: 'commanded CLOSED' })
+    expect(plantRun.stateOf('offsiteBreakerA')).toEqual({ word: 'OPEN', why: 'CMD CLOSED' })
   })
 
   test('a standby diesel output breaker stands open and closes onto its dead bus only once the diesel runs', () => {
@@ -193,7 +193,7 @@ describe('breakers', () => {
     plantRun.act('loss-offsite-power')
     plantRun.run(5_000)
     // Started on the dead bus and not yet up to speed: its state says the start command it does not yet follow.
-    expect(plantRun.stateOf('dieselGeneratorA')).toEqual({ word: 'STOP', why: 'commanded RUN' })
+    expect(plantRun.stateOf('dieselGeneratorA')).toEqual({ word: 'STOP', why: 'CMD RUN' })
     expect(Number(plantRun.read('safetyBusA.voltageKv'))).toBe(0)
     plantRun.run(45_000)
     // Running, its load sequence done, it says RUN, as a pump does.

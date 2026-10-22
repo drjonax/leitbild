@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import { scopeWithin } from '../src/features/displays/compose/topology.ts'
 import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
+import { commandNotFollowed } from '../src/packs/process-plant/observation/derived.ts'
 import { answerProcessPlantObservationQuery } from '../src/packs/process-plant/observation/query.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
@@ -53,7 +54,7 @@ const stateWord = (old: string, labels: ReadonlyArray<string>): string => {
 /** The command the old word said the item does not follow ("stopped; commanded to run", "35 % open; commanded shut disagrees"), in the new words. */
 const commandedWord = (old: string): string | null => {
   const commanded = old.match(/commanded (?:to )?(\w+)/)?.[1]
-  return commanded === undefined ? null : `commanded ${STATE_WORDS[commanded === 'run' ? 'running' : commanded === 'stop' ? 'stopped' : commanded] ?? commanded.toUpperCase()}`
+  return commanded === undefined ? null : commandNotFollowed(STATE_WORDS[commanded === 'run' ? 'running' : commanded === 'stop' ? 'stopped' : commanded] ?? commanded.toUpperCase())
 }
 /** What the old drawing wrote for an item that is a value, not a state (a level, what passes a header), or nothing: no state word to keep. */
 const VALUE_WORDS = /^(level |carrying flow$|no flow$|no state drawn$)/
