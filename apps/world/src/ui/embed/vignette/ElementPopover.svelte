@@ -20,8 +20,9 @@
   // its display's place offers (popover.ts elementOffer). In the display
   // window, the element's actions: the panel its Pack contributes to the
   // embed, mounted with the Run, the object and the element. In a chat
-  // answer, "Open in the display window", which opens the element's default
-  // there; elsewhere a line saying where it is operated. It stands beside its
+  // answer or a procedure tag's dialog, "Open in the display window", which
+  // opens the element's default there in one press; in a frame no page hosts,
+  // a line saying where it is operated. It stands beside its
   // item, never over it, at 100 % whatever the display's zoom. Focus moves
   // into it; Esc (unless a section claims it) closes it and gives the focus
   // back to the item, and a press outside it and its item closes it.

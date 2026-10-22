@@ -9,10 +9,11 @@ import { createViewHost, type ReceivedMessage } from '../src/ui/embed/view-host.
 import { elementOffer, openElementDefault } from '../src/ui/embed/vignette/popover.ts'
 
 // An element's pop-over operates the element only where a display window
-// presents its display. In a chat answer it offers the way there: the
-// element's default opened in the Workspace's window through the page that
-// relays to it. In a procedure tag's dialog, which nothing presents or
-// relays, it shows the default alone.
+// presents its display. In a chat answer or a procedure tag's dialog it
+// offers the way there in one press: the element's default opened in the
+// Workspace's window through the page that frames it. Both pages announce
+// themselves with the contract's view-host message, and both receive the same
+// view-open message. In a frame no page hosts, it shows the default alone.
 
 const origin = 'https://leitbild.test'
 const workspaceId = newWorkspaceId()
@@ -57,7 +58,18 @@ describe('an element\'s pop-over by where its display is shown', () => {
     expect(keys[2]).not.toBe(keys[0]!)
   })
 
-  test('in a procedure tag\'s dialog, which no window presents and no page relays, it shows the default alone and opens nothing', () => {
+  test('in a procedure tag\'s dialog, whose page opens the display window itself, the same button posts the same open request to that page', () => {
+    // The dialog (ProcedureTagDisplay.svelte) answers the frame's ready message with view-host, never with a presentation.
+    const page = framed()
+    page.fromParent({ type: 'leitbild:view-host' })
+    expect(page.offer()).toBe('open-in-window')
+    const tag = { key: '{"subjects":["plant:a#pressurizer"]}', title: 'Halden Unit 1 · Pressurizer' }
+    expect(openElementDefault(page.host, tag, valve)).toBe(true)
+    const message = embeddedViewOpenMessageSchema.parse(page.posted[0])
+    expect(message).toEqual({ type: 'leitbild:view-open', view: { key: expect.stringMatching(/^opened:[0-9a-f]{8}$/), caption: 'From Halden Unit 1 · Pressurizer', envelope: valve } })
+  })
+
+  test('in a frame no page hosts, it shows the default alone and opens nothing', () => {
     const page = framed()
     expect(page.offer()).toBe('nothing')
     expect(openElementDefault(page.host, from, valve)).toBe(false)

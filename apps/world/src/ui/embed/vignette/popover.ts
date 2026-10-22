@@ -79,8 +79,9 @@ export const POPOVER_WIDTH = 340
 /**
  * What an element's pop-over offers under the element's default, by where its
  * display is shown (view-host.ts): its Pack's actions only in the display
- * window; in a chat answer, whose page relays to the Workspace's window, the
- * way there; elsewhere (a procedure tag's dialog) nothing to act on.
+ * window; framed by a page that opens displays for it (a chat answer's, which
+ * relays to the Workspace's window, or a procedure tag dialog's), the way
+ * there; in a frame no page hosts, nothing to act on.
  */
 export type ElementOffer = 'actions' | 'open-in-window' | 'nothing'
 export const elementOffer = (opening: DisplayOpening | null): ElementOffer =>
@@ -95,9 +96,9 @@ export interface OpenedFrom {
 
 /**
  * Opens the element's default (`envelope`, World's default display of the
- * element) in the Workspace's display window, through the chat page that
- * relays to it, captioned with the display it was opened from. False where
- * nothing opens it.
+ * element) in the Workspace's display window, through the page that frames
+ * the display (view-host.ts openDisplay), captioned with the display it was
+ * opened from. False where nothing opens it.
  */
 export const openElementDefault = (host: Pick<ViewHost, 'openDisplay'>, from: OpenedFrom, envelope: EmbeddedViewEnvelope): boolean =>
   host.openDisplay({ state: envelope.state, title: envelope.title, listing: () => openedListing({ ...from, envelope }, { state: envelope.state, title: envelope.title }) })
