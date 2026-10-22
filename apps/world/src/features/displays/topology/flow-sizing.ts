@@ -10,8 +10,9 @@
 // room, its readings (layout.ts itemText). A group writes how many of its
 // members run.
 // The ceilings are today's displays': a drawing across lanes keeps the unit
-// overview's twelve crossings, one within a lane an equipment detail's four.
-// The layout comes back in grid units.
+// overview's twelve crossings, one within a lane an equipment detail's four;
+// three bends an edge, a fourth only where three draw nothing. The layout
+// comes back in grid units.
 import { layoutDiagram, type DiagramProfile } from '../diagram/index.ts'
 import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import { flowPlan, type FlowSizing } from './flow.ts'
@@ -27,14 +28,21 @@ const STATE_CHARACTERS = 9
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */
 const VESSEL_ENDS = { top: 2 * GRID, bottom: GRID }
 
-const limits = { symbols: 60, symbolsPerPartition: 12, sharedSymbols: 30, partitions: 8, bendsPerEdge: 3 } as const
-const profile = (crossings: number): DiagramProfile => ({
+const limits = { symbols: 60, symbolsPerPartition: 12, sharedSymbols: 30, partitions: 8 } as const
+const profile = (crossings: number, bendsPerEdge: number): DiagramProfile => ({
   grid: GRID, cell: GRID, pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5, trackGap: 4 }, textClearance: 9, frameMargin: 1, flapHeight: 0, flapLabelPadding: 0,
-  limits: { ...limits, crossings },
+  limits: { ...limits, crossings, bendsPerEdge },
   fit: (['full', 'required'] as const).flatMap(detail => (['right', 'partitionsBelow', 'allBelow'] as const).map(text => ({ detail, text }))),
 })
-/** Across lanes, and within one lane or none. */
-export const flowProfiles = { lanes: profile(12), lane: profile(4) } as const
+/**
+ * Across lanes, and within one lane or none: today's three bends an edge first; a fourth only for a drawing that
+ * three refuse (a line-up from a mover and a header to the transfer in every lane), so every drawing three allow
+ * stays as it is.
+ */
+export const flowProfiles = {
+  lanes: [profile(12, 3), profile(12, 4)],
+  lane: [profile(4, 3), profile(4, 4)],
+} as const
 
 /** A header: a junction whose ports, more than two, are all one circuit. */
 const isHeader = (node: TopologyNode): boolean => node.class === 'junction' && node.ports.length > 2 && new Set(node.ports.map(port => port.circuit ?? port.id)).size === 1
@@ -51,7 +59,7 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
   const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
   return {
-    key: 'vignette-flow-8',
+    key: 'vignette-flow-9',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
     bar: node => (node.class === 'bus' && (lines.get(node.id) ?? 0) > 2) || isHeader(node),
@@ -95,7 +103,10 @@ export const flowLayout = (scoped: ScopedTopology, room: { readonly columns: num
   const planned = flowPlan(scoped, sizing)
   if (planned.graph.nodes.length === 0 || barsOnlyJoinBars(planned.graph)) return null
   const lanes = new Set(planned.graph.nodes.flatMap(node => (node.partition === undefined ? [] : [node.partition.key]))).size
-  const result = layoutDiagram(planned.graph, lanes > 1 ? flowProfiles.lanes : flowProfiles.lane, { maxWidth: room.columns * GRID, maxHeight: room.rows * GRID })
+  const ladder = lanes > 1 ? flowProfiles.lanes : flowProfiles.lane
+  const fit = { maxWidth: room.columns * GRID, maxHeight: room.rows * GRID }
+  const first = layoutDiagram(planned.graph, ladder[0], fit)
+  const result = first.ok ? first : layoutDiagram(planned.graph, ladder[1], fit)
   if (!result.ok) return null
   const grid = (value: number): number => value / GRID
   const box = <T extends { readonly x: number; readonly y: number; readonly width: number; readonly height: number }>(at: T) => ({ x: grid(at.x), y: grid(at.y), width: grid(at.width), height: grid(at.height) })
