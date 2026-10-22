@@ -84,6 +84,11 @@ describe('readout', () => {
     // A count reads whole, as the card writes it.
     expect(readingLook('Energised islands', 'number', undefined, { value: 1, unit: '1', quantity: 'count', thresholds: [] })).toMatchObject({ text: '1', decimals: 0 })
     expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ value: null, text: '?' })
+    // A reading over decades is shown as written (the block's text value), never as NaN, which the block draws as "—".
+    const current = readingLook('Intermediate range current', 'number', undefined, { value: 4.4e-8, unit: 'A', thresholds: [] })
+    expect(current).toMatchObject({ kind: 'number', text: '4.4×10⁻⁸', value: '4.4×10⁻⁸', unit: 'A' })
+    expect(readingLook('Leak rate', 'number', undefined, { value: 2.3e-12, unit: 'kg/s', thresholds: [] }).value).toBe('2.3×10⁻¹²')
+    expect(readingLook('Leak rate', 'number', undefined, { value: 0, unit: 'kg/s', thresholds: [] }).value).toBe(0)
   })
 
   test('states: a word from the declaration, active only where declared so or true (Q8), "?" while unknown, "since" its last change', () => {

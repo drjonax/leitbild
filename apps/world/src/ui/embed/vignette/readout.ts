@@ -72,8 +72,12 @@ export interface ReadingLook {
   readonly kind: 'number' | 'state'
   /** The number at its decimals, the state's word, "?" for a bad or absent reading, "—" where none applies. */
   readonly text: string
-  /** The number a readout block shows: the card's digits read back (never "-0"), with its decimals; null for a state or where there is none (the block then shows `text`). */
-  readonly value: number | null
+  /**
+   * What a readout block shows: the number as the card writes it, read back (never "-0"), with its decimals; a
+   * reading written over decades (4.4×10⁻⁸) as its text, which the block shows as written; null for a state or where
+   * there is none (the block then shows `text` in its off style).
+   */
+  readonly value: number | string | null
   readonly decimals: number
   readonly unit: string
   readonly tone: AlertTone | null
@@ -105,6 +109,9 @@ export const activeState = (value: Observation['value'] | undefined, states: Obs
 const stateWord = (value: string | boolean, states: Observable['states']): string =>
   states?.find(state => state.value === String(value))?.label ?? (typeof value === 'boolean' ? (value ? 'yes' : 'no') : value)
 
+/** A number as numberText writes it at its decimals; anything else it writes (a power of ten) is shown as written. */
+const NUMERAL = /^-?\d+(?:\.\d+)?$/
+
 /** How a value reads, from its declaration and its observation. */
 export const readingLook = (label: string, valueType: Observable['valueType'], states: Observable['states'], input: ReadingInput): ReadingLook => {
   const value = input.value
@@ -119,10 +126,12 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
   const state = (valueType !== 'number' && valueType !== 'duration') || typeof value === 'string' || typeof value === 'boolean'
   const text = quality === 'not-applicable' ? '—' : unknown ? '?' : typeof value === 'number' ? numberText(value, input.unit, input.quantity)
     : valueType === 'instant' && typeof value === 'string' ? clockText(value) : stateWord(value, states)
+  const number = !state && !unknown && quality !== 'not-applicable' && typeof value === 'number'
   return {
     kind: state ? 'state' : 'number',
     text,
-    value: !state && !unknown && quality !== 'not-applicable' && typeof value === 'number' ? Number(text) : null,
+    // A numeral reads back as the number the block formats; a power of ten is no numeral (Number() would be NaN).
+    value: !number ? null : NUMERAL.test(text) ? Number(text) : text,
     decimals: typeof value === 'number' ? decimalsFor(input.unit, value, input.quantity) : 0,
     // No number, no unit: a state, a reading not known, or one outside its declared validity ("—").
     unit: state || unknown || quality === 'not-applicable' ? '' : unitSymbol(input.unit),

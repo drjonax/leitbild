@@ -24,7 +24,7 @@
       alignment="right"
       hintedZeros={false}
       value={look.value}
-      valueType="number"
+      valueType={typeof look.value === 'string' ? 'text' : 'number'}
       fractionDigits={look.decimals}
       off={look.value === null}
       offText={look.text}
