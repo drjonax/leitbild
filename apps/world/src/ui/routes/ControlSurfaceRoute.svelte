@@ -76,7 +76,7 @@
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject } from '../../packs/process-plant/model.ts'
   import type { ProcessPlantArtifactKind } from '../../packs/process-plant/ui/plant-client.ts'
-  import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
+  import { observedAssetsOf, packObserves, type DeckRunJoin, type DisplayWindowRequest, type DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import PlantCard, { type PlantCardAction } from '../../packs/process-plant/ui/PlantCard.svelte'
   import { plantCardView } from '../../packs/process-plant/ui/plant-card.ts'
@@ -1084,10 +1084,7 @@
   const observedAssetObjects = $derived.by<ReadonlyArray<OperationalObject>>(() => {
     const pack = activePack
     if (pack === null) return []
-    const observed = (object: OperationalObject): boolean => pack.packForObject(object).descriptor.contributions.includes('observation')
-    const inRail = categoryRows.flatMap(row => row.objects).filter(observed)
-    const railIds = new Set(inRail.map(object => object.id))
-    return [...inRail, ...objects.filter(object => observed(object) && !railIds.has(object.id))]
+    return observedAssetsOf(categoryRows.flatMap(row => row.objects), objects, object => packObserves(pack.packForObject(object).descriptor))
   })
 
   const droneControlWindowModels = $derived<ReadonlyArray<DroneWindowModel>>(

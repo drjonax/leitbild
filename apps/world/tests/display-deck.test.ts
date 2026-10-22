@@ -4,13 +4,17 @@ import type { ObjectId } from '../src/core/model/index.ts'
 import {
   acknowledgeShown,
   answerDeckKey,
+  backFrom,
   buildDisplayDeck,
   deckEntryAsset,
   mountedDeckEntries,
   newDisplayAnnouncement,
   observeConversation,
   observeListingsForShown,
+  observedAssetsOf,
+  openedAfter,
   openingAcknowledgement,
+  packObserves,
   assetDeckKey,
   requestedDeckEntry,
   shownDeckEntry,
@@ -106,10 +110,17 @@ describe('display deck', () => {
     expect(deckEntryAsset(deck[2]!, assets, joined)).toEqual({ ok: false, reason: 'The display names no asset of this Run' })
   })
 
-  test('a display about several assets acts on none of them', () => {
-    const both = listing('both', { objectIds: ['unit-a', 'unit-b'] })
+  test('a display about several assets acts on its lead subject\'s, the first it names, and says how many it names', () => {
+    const both = listing('both', { objectIds: ['unit-b', 'unit-a'] })
     const deck = buildDisplayDeck({ simulationRunId: runId, assets, listings: [both], shown: null })
-    expect(deckEntryAsset(deck[2]!, assets, joined)).toEqual({ ok: false, reason: 'The display is about several assets' })
+    expect(deckEntryAsset(deck[2]!, assets, joined)).toEqual({ ok: true, asset: assets[1]!, among: 2 })
+  })
+
+  test('an answer\'s refs name their asset by the object before the #, with its Pack (E2 item 3)', () => {
+    const halden = listing('halden', { objectIds: ['unit-b'] })
+    expect(halden.envelope.state).toContain('"unit-b#pressurizer.pressureMPa"')
+    const deck = buildDisplayDeck({ simulationRunId: runId, assets, listings: [halden], shown: null })
+    expect(deckEntryAsset(deck[2]!, assets, joined)).toEqual({ ok: true, asset: { objectId: 'unit-b' as ObjectId, packId: 'process-plant', label: 'Unit B' } })
   })
 
   test('steps without wrapping and jumps to the ends', () => {
@@ -119,6 +130,41 @@ describe('display deck', () => {
     expect(steppedDeckEntry(deck, deck[2]!.key, 'next')).toBeNull()
     expect(steppedDeckEntry(deck, deck[1]!.key, 'first')?.key).toBe(deck[0]!.key)
     expect(steppedDeckEntry(deck, deck[0]!.key, 'last')?.key).toBe(deck[2]!.key)
+  })
+})
+
+describe('the Run\'s observed assets (E2 item 1)', () => {
+  test('a Pack observes where its descriptor declares the observation contribution: the plant, the grid and the weather do, dispatch does not', async () => {
+    const { processPlantPackView } = await import('../src/packs/process-plant/ui-pack.ts')
+    const { electricGridPackView } = await import('../src/packs/electric-grid/ui-pack.ts')
+    const { weatherPack } = await import('../src/packs/weather/pack.ts')
+    const { ambulancePackView } = await import('../src/packs/ambulance/ui-pack.ts')
+    expect([processPlantPackView, electricGridPackView, weatherPack, ambulancePackView].map(pack => packObserves(pack.descriptor))).toEqual([true, true, true, false])
+  })
+
+  test('are listed in rail order, then those the rail does not list, never one whose Pack does not observe', () => {
+    const object = (id: string, observes: boolean) => ({ id, observes })
+    const all = [object('ambulance-1', false), object('unit-b', true), object('unit-a', true), object('grid', true)]
+    expect(observedAssetsOf([all[2]!, all[0]!, all[1]!], all, entry => entry.observes).map(entry => entry.id)).toEqual(['unit-a', 'unit-b', 'grid'])
+  })
+})
+
+describe('Back (E2, the docs audit)', () => {
+  test('a display opened after another returns to it, and each step back returns one further', () => {
+    const deck = buildDisplayDeck({ simulationRunId: runId, assets, listings: [listing('one')], shown: null })
+    const [overview, , answer] = deck as [DeckEntry, DeckEntry, DeckEntry]
+    const element = requestedDeckEntry(deck, runId, { kind: 'listing', listing: listing('element') })!
+    const valve = requestedDeckEntry(deck, runId, { kind: 'listing', listing: listing('valve') })!
+    let returns = openedAfter(new Map(), element, overview)
+    returns = openedAfter(returns, valve, element)
+    expect(openedAfter(returns, answer, answer)).toBe(returns)
+    const first = backFrom(returns, deck, valve.key)!
+    expect(first.to.key).toBe(element.key)
+    const second = backFrom(first.returns, deck, element.key)!
+    expect(second.to).toBe(overview)
+    expect(backFrom(second.returns, deck, overview.key)).toBeNull()
+    // A display opened after none has no Back.
+    expect(backFrom(new Map(), deck, answer.key)).toBeNull()
   })
 })
 

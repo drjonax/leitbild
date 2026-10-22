@@ -35,12 +35,14 @@
   import { defaultDisplayEnvelope, readDefaultDisplay } from './default-display.ts'
   import {
     acknowledgeShown,
+    backFrom,
     buildDisplayDeck,
     deckEntryAsset,
     mountedDeckEntries,
     newDisplayAnnouncement,
     observeConversation,
     observeListingsForShown,
+    openedAfter,
     openingAcknowledgement,
     requestedDeckEntry,
     shownDeckEntry,
@@ -51,6 +53,7 @@
     type DeckAcknowledgement,
     type DeckAsset,
     type DeckEntry,
+    type DeckReturns,
     type DeckRunJoin,
     type DeckStep,
     type DisplayWindowRequest,
@@ -199,7 +202,7 @@
   let extents = $state.raw<ReadonlyMap<string, DisplayExtent>>(new Map())
   let framesUp = $state.raw<ReadonlySet<string>>(new Set())
   // A display the window opened from another, or for a request from chat, and the display Back returns to.
-  let returnTo = $state.raw<ReadonlyMap<string, DeckEntry>>(new Map())
+  let returnTo = $state.raw<DeckReturns>(new Map())
   let bodySize = $state.raw<DisplaySize | null>(null)
   let popover = $state<Popover | null>(null)
   let listActiveIndex = $state(0)
@@ -251,6 +254,8 @@
   const currentEnvelope = $derived(current === null ? null : envelopeFor(current))
   // A listing this window cannot show (another view type) says so in place of a frame.
   const currentRefusal = $derived(current?.source === 'answer' ? current.refusal : null)
+  // The display the shown one was opened after: Back returns there.
+  const backTarget = $derived(current === null ? null : returnTo.get(current.key) ?? null)
   const connecting = $derived(current !== null && currentDefault?.state !== 'failed' && currentRefusal === null
     && (currentEnvelope === null || !framesUp.has(current.key)))
   const effectiveBounds = $derived<ProcessDisplayWindowBounds>(maximised
@@ -402,7 +407,7 @@
   const openAfter = (from: DeckEntry, listing: EmbeddedViewListing): void => {
     const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing })
     if (entry === null) return
-    returnTo = withValue(returnTo, entry.key, from)
+    returnTo = openedAfter(returnTo, entry, from)
     showEntry(entry)
   }
 
@@ -437,10 +442,10 @@
   }
 
   const frameBack = (key: string): void => {
-    const target = returnTo.get(key)
-    if (target === undefined) return
-    returnTo = withoutKey(returnTo, key)
-    showEntry(deck.find(entry => entry.key === target.key) ?? target)
+    const back = backFrom(returnTo, deck, key)
+    if (back === null) return
+    returnTo = back.returns
+    showEntry(back.to)
   }
 
   const frameProblem = (_key: string, problem: string): void => {
@@ -495,7 +500,7 @@
     appliedRequest = next.sequence
     const entry = requestedDeckEntry(deck, runId, next.target)
     // A display chat opens that the window does not list (equipment named on an answer's display) returns to what it showed.
-    if (entry !== null && entry.source === 'answer' && !entry.listed && current !== null && current.key !== entry.key) returnTo = withValue(returnTo, entry.key, current)
+    if (entry !== null && entry.source === 'answer' && !entry.listed && current !== null) returnTo = openedAfter(returnTo, entry, current)
     if (entry !== null) showEntry(entry)
     else {
       notice = 'That asset is not in this Run.'
@@ -785,6 +790,18 @@
           >New ›</button>
         {/if}
       </div>
+      {#if backTarget !== null}
+        <button
+          type="button"
+          class="display-window-back"
+          aria-label="Back to {backTarget.title}"
+          title="Back to {backTarget.title}"
+          onclick={() => { if (current !== null) frameBack(current.key) }}
+        >
+          <ChevronLeft size={16} aria-hidden="true" />
+          <span>{backTarget.title}</span>
+        </button>
+      {/if}
 
       <!-- The title strip moves the window; double-click maximises (also ⤢). -->
       <div
@@ -805,6 +822,10 @@
         <strong id={windowLabelId}>{current?.title ?? 'Displays'}</strong>
         {#if current !== null && tier !== 'narrow' && tier !== 'tiny'}
           <span class="display-window-caption">· {current.caption}</span>
+        {/if}
+        {#if assetTarget.ok && assetTarget.among !== undefined}
+          <!-- An answer about several assets: its tools and procedures are its lead subject's, and the window says so. -->
+          <span class="display-window-caption">· {assetTarget.asset.label}'s tools, the first of {assetTarget.among} assets it names</span>
         {/if}
       </div>
 

@@ -1447,6 +1447,20 @@ body.rail-resizing {
   font-weight: 650;
 }
 
+/* Back to the display this one was opened after, as the window's own step. */
+.display-window-header .display-window-back {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 200px;
+  padding: 0 8px 0 4px;
+  color: var(--text);
+}
+
+.display-window-header .display-window-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .display-window-slider {
   width: 96px;
   accent-color: var(--accent);

@@ -1,5 +1,6 @@
 import type { EmbeddedViewListing } from '@leitbild/contracts'
 import type { ObjectId } from '../../core/model/index.ts'
+import type { WorldPackDescriptor } from '../../core/packs/protocol.ts'
 import { listingRefusal } from './display-window-messages.ts'
 import type { DisplayKind } from './display-zoom.ts'
 
@@ -14,6 +15,17 @@ import type { DisplayKind } from './display-zoom.ts'
 
 /** Mounted display frames: the shown one and the three most recently shown. */
 export const DISPLAY_DECK_MOUNTED_LIMIT = 4
+
+/** Whether a Pack's objects are assets the window opens a default of: the Pack declares observations. */
+export const packObserves = (descriptor: Pick<WorldPackDescriptor, 'contributions'>): boolean =>
+  descriptor.contributions.some(contribution => contribution.kind === 'observation')
+
+/** The Run's observed assets in rail order, then those the rail does not list. */
+export const observedAssetsOf = <O extends { readonly id: string }>(rail: ReadonlyArray<O>, all: ReadonlyArray<O>, observed: (object: O) => boolean): ReadonlyArray<O> => {
+  const inRail = rail.filter(observed)
+  const railIds = new Set(inRail.map(object => object.id))
+  return [...inRail, ...all.filter(object => observed(object) && !railIds.has(object.id))]
+}
 
 /** An observed asset of the Run, as the rail lists it. */
 export interface DeckAsset {
@@ -71,14 +83,14 @@ export const answerDeckKey = (listingKey: string): string => `answer:${listingKe
 // state is read once however often the Run's objects change.
 const namedObjects = new WeakMap<EmbeddedViewListing, ReadonlySet<string>>()
 
-/** The objects a vignette's state names, in its refs and its views' object ids; a state that is no JSON names none (its frame says why). */
+/** The objects a vignette's state names, in order: its refs' and chips' objects and its views' object ids; a state that is no JSON names none (its frame says why). */
 const objectsOf = (listing: EmbeddedViewListing): ReadonlySet<string> => {
   const cached = namedObjects.get(listing)
   if (cached) return cached
   const named = new Set<string>()
   const visit = (value: unknown, key: string | null): void => {
     if (typeof value === 'string' && (key === 'objectId' || key === 'objectIds')) named.add(value)
-    else if (typeof value === 'string' && key === 'refs' && value.includes('#')) named.add(value.slice(0, value.indexOf('#')))
+    else if (typeof value === 'string' && (key === 'refs' || key === 'chips') && value.includes('#')) named.add(value.slice(0, value.indexOf('#')))
     else if (Array.isArray(value)) for (const entry of value) visit(entry, key)
     else if (value !== null && typeof value === 'object') for (const [inner, entry] of Object.entries(value)) visit(entry, inner)
   }
@@ -312,9 +324,12 @@ export const mountedDeckEntries = (
   deck: ReadonlyArray<DeckEntry>,
 ): ReadonlyArray<DeckEntry> => frames.map(frame => deck.find(entry => entry.key === frame.key) ?? frame.entry)
 
-/** The asset its Pack's window tools, procedures and the status dot act on for an entry, or why there is none. */
+/**
+ * The asset its Pack's window tools, procedures and the status dot act on for an entry, or why there is none. An
+ * answer's display about several assets acts on the first it names, its lead subject, and says how many it names.
+ */
 export type DeckAssetTarget =
-  | { readonly ok: true; readonly asset: DeckAsset }
+  | { readonly ok: true; readonly asset: DeckAsset; readonly among?: number }
   | { readonly ok: false; readonly reason: string }
 
 /**
@@ -340,9 +355,26 @@ export const deckEntryAsset = (entry: DeckEntry, assets: ReadonlyArray<DeckAsset
     const asset = assets.find(candidate => candidate.objectId === entry.asset.objectId)
     return asset ? { ok: true, asset } : { ok: false, reason: `${entry.asset.label} is no longer in this Run` }
   }
-  // An answer's display is about an asset where it names one asset of the Run, and only one.
-  const named = assets.filter(candidate => objectsOf(entry.listing).has(candidate.objectId))
-  return named.length === 1 ? { ok: true, asset: named[0]! } : { ok: false, reason: named.length === 0 ? 'The display names no asset of this Run' : 'The display is about several assets' }
+  // An answer's display is about the assets of the Run it names (a ref's object before its '#'), its lead subject first.
+  const named = [...objectsOf(entry.listing)].flatMap(objectId => assets.filter(candidate => candidate.objectId === objectId))
+  if (named.length === 0) return { ok: false, reason: 'The display names no asset of this Run' }
+  return named.length === 1 ? { ok: true, asset: named[0]! } : { ok: true, asset: named[0]!, among: named.length }
+}
+
+/** Where each display opened after another returns to (Back), by the opened display's key. */
+export type DeckReturns = ReadonlyMap<string, DeckEntry>
+
+/** A display opened after another (a proposal's element, equipment a display names, one chat opened unlisted): its Back returns there. */
+export const openedAfter = (returns: DeckReturns, opened: DeckEntry, from: DeckEntry): DeckReturns =>
+  opened.key === from.key ? returns : new Map(returns).set(opened.key, from)
+
+/** Back from a display: the one it was opened after (the deck's own entry while the deck has it), and the returns without it; null where it was opened after none. */
+export const backFrom = (returns: DeckReturns, deck: ReadonlyArray<DeckEntry>, key: string): { readonly to: DeckEntry; readonly returns: DeckReturns } | null => {
+  const target = returns.get(key)
+  if (target === undefined) return null
+  const rest = new Map(returns)
+  rest.delete(key)
+  return { to: deck.find(entry => entry.key === target.key) ?? target, returns: rest }
 }
 
 /** Opening the window: on an asset's display (rail) or on a listed display (chat). */
