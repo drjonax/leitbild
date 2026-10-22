@@ -2,6 +2,7 @@ import { recordingSeriesIdFor, type ObjectId } from '../../../core/model/index.t
 import type { ObservationDeclaration } from '../../../core/observation/capabilities.ts'
 import type { Observable } from '../../../core/observation/model.ts'
 import type { CompiledComponent, ProcessSignalBinding, ProcessUnit } from '../graph/index.ts'
+import { equipmentItemLabel } from '../equipment/items.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
@@ -70,10 +71,15 @@ const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding
     : from.semantics.energy.some(role => role.role === 'transfer' && role.from === circuit) ? 'Tcold' : undefined
 }
 
-/** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
+/**
+ * Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's
+ * ends, by short name. An operator name that names its equipment ("Relief header pressure") is the whole label; one
+ * that does not (CET, Tavg) is written beside the signal's.
+ */
 const labelOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
   const graph = plant.graph
   const name = operatorName(plant, binding)
+  if (name !== undefined && binding.owner.type === 'component' && name.toLowerCase().includes(nameOf(graph.components[binding.owner.componentIndex]!).toLowerCase())) return name
   const reads = name === undefined ? binding.label : `${binding.label} (${name})`
   if (binding.owner.type === 'link') {
     const link = graph.links[binding.owner.linkIndex]!
@@ -92,12 +98,25 @@ const elementLabel = (plant: CompiledProcessPlant, component: CompiledComponent)
   return dieselBacked ? `${component.label} (emergency bus)` : component.label
 }
 
+const devices = new WeakMap<CompiledProcessPlant, ReadonlyMap<string, string>>()
+
+/** The device each of its host's variables belongs to, by path: `<component>.<device>`, as its item and its drawing are named. */
+const deviceVariables = (plant: CompiledProcessPlant): ReadonlyMap<string, string> => devices.get(plant) ?? (() => {
+  const owned = new Map(plant.graph.components.flatMap(component => component.semantics.embedded.flatMap(device =>
+    device.variables.map(path => [String(path), `${component.id}.${device.id}`] as const))))
+  devices.set(plant, owned)
+  return owned
+})()
+
 /**
- * The equipment a signal is measured on: the component or line that owns it,
- * a declared element, as an alarm's annunciator names it (its subject). A
- * binding's `equipmentId` may name a system instead ("rcs", "afw-system").
+ * The equipment a signal is measured on, a declared element, as an alarm's
+ * annunciator names it (its subject): the device its host bundles where the
+ * variable is the device's (the pressurizer's relief valve position),
+ * else the component or line that owns it. A binding's `equipmentId` may
+ * name a system instead ("rcs", "afw-system").
  */
-export const elementOf = (binding: ProcessSignalBinding): string => String(binding.path).split('.')[0]!
+const elementOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string =>
+  deviceVariables(plant).get(String(binding.path)) ?? String(binding.path).split('.')[0]!
 
 /** Whether the Plant declares the signal: it publishes it, or the Run records it. */
 const declares = (plant: CompiledProcessPlant, recording: PlantRecording, binding: ProcessSignalBinding): boolean =>
@@ -157,7 +176,7 @@ const observableOf = (objectId: ObjectId, plant: CompiledProcessPlant, recording
     basis: isDemand(binding) ? 'command' : readsAsMeasured(binding) && binding.simulatorOnly !== true ? 'instrument' : 'model',
     series: recording !== null && recording.seriesIds.has(seriesId) ? { seriesId, intervalMs: recording.intervalMs } : null,
     ...(binding.tagId === undefined ? {} : { tag: binding.tagId }),
-    element: elementOf(binding),
+    element: elementOf(plant, binding),
   }
 }
 
@@ -195,6 +214,14 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
           id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
           ...(component.metadata?.presentation?.shortLabel === undefined ? {} : { shortLabel: component.metadata.presentation.shortLabel }),
           ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
+        })),
+        // A device its equipment bundles (the pressurizer's relief and block valves) is an element of its own, drawn on its line.
+        ...graph.components.flatMap(component => component.semantics.embedded.map(device => {
+          const label = equipmentItemLabel(component, device)
+          return {
+            id: `${component.id}.${device.id}`, class: device.id, label, ...(label.length > 24 ? {} : { shortLabel: label }),
+            ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
+          }
         })),
         ...graph.links.map(link => {
           const [from, to] = [graph.components[link.fromComponentIndex]!, graph.components[link.toComponentIndex]!]

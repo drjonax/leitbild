@@ -5330,7 +5330,17 @@
       },
       "metadata": {
         "presentation": {
-          "shortLabel": "Relief header"
+          "shortLabel": "Relief header",
+          "names": {
+            "pressureNodeMPa": "Relief header pressure",
+            "mixedPressureMPa": "Relief header mixing pressure",
+            "mixedTemperatureC": "Relief header temperature",
+            "inventoryKg": "Relief header inventory",
+            "inletFlowKgPerS": "Relief header inlet flow",
+            "outletFlowKgPerS": "Relief header outlet flow",
+            "flowBalanceResidualKgPerS": "Relief header flow balance residual",
+            "unmetDemandKgPerS": "Relief header unmet demand"
+          }
         }
       }
     },

@@ -302,10 +302,13 @@ export const processGraphPresentationSchema = z.object({
    * What crews call its readings, by local variable path, where the name is
    * the standard one for that very signal (R37): the core-exit thermocouples'
    * average "CET", a mean coolant temperature "Tavg", the power-range flux
-   * the board and the procedures read as "reactor power". Written into the
-   * reading's label, as words a search finds it by; never an alias.
+   * the board and the procedures read as "reactor power"; or the reading by
+   * its equipment where its kind's words name only the kind ("Relief header
+   * pressure", not "Process header pressure node"). Written into the
+   * reading's label, as words a search finds it by; a name that names its
+   * equipment is the whole label. Never an alias.
    */
-  names: z.record(z.string().min(1), z.string().min(1).max(24)).optional(),
+  names: z.record(z.string().min(1), z.string().min(1).max(60)).optional(),
   /**
    * Its pushbuttons, by local variable path: on/off commands that spring back
    * once pressed (an SI block, a manual trip), so an operator presses them

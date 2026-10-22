@@ -43,9 +43,9 @@ describe('plant topology provider (P5)', () => {
       pressurizer: bindings('pressurizer'), rcp: bindings('rcpA'), bus: bindings('safetyBusA'), valve: bindings('mainSteamIsolationValveA'), header: bindings('feedwaterHeader'),
     }).toEqual({
       pressurizer: ['level pressurizer.levelPercent', 'value pressurizer.pressureMPa', 'value pressurizer.levelPercent'],
-      rcp: ['running rcpA.runningState'],
-      bus: ['conducting safetyBusA.energized', 'value safetyBusA.voltageKv'],
-      valve: ['position mainSteamIsolationValveA.effectivePositionFraction'],
+      rcp: ['running rcpA.state'],
+      bus: ['value safetyBusA.voltageKv', 'conducting safetyBusA.state'],
+      valve: ['position mainSteamIsolationValveA.effectivePositionFraction', 'conducting mainSteamIsolationValveA.state'],
       header: ['flow feedwaterHeader.outletFlowKgPerS'],
     })
     // A position is a fraction of travel: a valve's opening, each of the core's rod banks withdrawn (D3 ruling 4).
@@ -54,8 +54,10 @@ describe('plant topology provider (P5)', () => {
     const positions = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'position').map(binding => declared.get(binding.ref)!))
     expect(positions.length).toBeGreaterThan(20)
     expect(positions.filter(observable => observable.quantity !== 'fraction' || observable.unit !== '1').map(observable => observable.ref)).toEqual([])
-    // An operated item whose own signal is not published says what it does through its state observable: a breaker's contacts, a pump running.
-    expect([bindings('offsiteBreakerA'), bindings('condensatePumpA')]).toEqual([['conducting offsiteBreakerA.state'], ['running condensatePumpA.state']])
+    // Each item that runs, is live, or opens and shuts runs or conducts on its state observable, so a drawing writes its word and
+    // the command it does not follow (RUN, SHUT, ON LINE); a valve's glyph opens with its position.
+    expect([bindings('offsiteBreakerA'), bindings('condensatePumpA'), bindings('turbine')]).toEqual([['conducting offsiteBreakerA.state'], ['running condensatePumpA.state'], ['value turbine.electricMw', 'running turbine.state']])
+    expect(served.nodes.filter(entry => declared.has(`${objectId}#${entry.id}.state`) && !entry.bindings.some(binding => binding.ref === `${objectId}#${entry.id}.state`)).map(entry => entry.id)).toEqual([])
     expect(served.edges.find(edge => edge.id === 'rcs-hot-leg-a')?.bindings).toEqual([{ role: 'flow', ref: `${objectId}#rcs-hot-leg-a.flowKgPerS` }])
     const refs = [...served.nodes, ...served.edges].flatMap(item => item.bindings.map(binding => binding.ref))
     expect(refs.filter(ref => !declared.has(ref))).toEqual([])
@@ -77,7 +79,7 @@ describe('plant topology provider (P5)', () => {
     const porv = served.nodes.find(entry => entry.id === 'pressurizer.reliefValve')!
     expect(porv).toMatchObject({ class: 'switch', label: 'PORV', shortLabel: 'PORV' })
     expect(porv.element).toBeUndefined()
-    expect(bindings('pressurizer.reliefValve')).toEqual(['flow pressurizer.reliefFlowKgPerS', 'position pressurizer.reliefValveEffectivePositionFraction'])
+    expect(bindings('pressurizer.reliefValve')).toEqual(['flow pressurizer.reliefFlowKgPerS', 'position pressurizer.reliefValveEffectivePositionFraction', 'conducting pressurizer.reliefValve.state'])
     // Each is the item controls.list names, so the pop-over's element actions operate it.
     const items = new Set(plantControlsFor(plant).items.map(item => item.id))
     expect(served.nodes.filter(entry => entry.id.includes('.')).every(entry => items.has(entry.id))).toBe(true)
@@ -97,7 +99,7 @@ describe('plant topology provider (P5)', () => {
   test('D1: the grid source is the boundary a Scenario connection joins, by the port id the Plant\'s electrical ports name', () => {
     expect(served.boundaries).toEqual([{ node: 'offsiteGrid', port: 'outlet', externalPortId: 'grid-420kv' }])
     expect(processPlantElectricalPortDefinitions(plant).map(port => port.id)).toEqual(['grid-420kv'])
-    expect(bindings('offsiteGrid')).toEqual(['conducting offsiteGrid.energized'])
+    expect(bindings('offsiteGrid')).toEqual(['conducting offsiteGrid.state'])
   })
 
   test('nodes are the equipment that pipes or cables join, in the model\'s order, named and labelled as the unit names them', () => {

@@ -22,6 +22,10 @@ guardPlantTests()
 // procedure-tag-default.test.ts, P9 in compose-plant-parity.test.ts; P6 is process-plant-proposal-characterization.
 
 const record = await Bun.file(join(import.meta.dir, 'fixtures/display-characterization/old-path.json')).json()
+// The state word the old path drew for each item, on the unit overview and on the detail around its component.
+const itemWords = await Bun.file(join(import.meta.dir, 'fixtures/display-parity/item-words.json')).json() as {
+  readonly states: Readonly<Record<string, { readonly overview: Readonly<Record<string, string>>; readonly details: Readonly<Record<string, string>> }>>
+}
 const faceplates = await Bun.file(join(import.meta.dir, 'fixtures/display-parity/faceplate-rows.json')).json() as {
   readonly ends: ReadonlyArray<{ readonly end: string; readonly values: ReadonlyArray<string>; readonly flows: ReadonlyArray<string>; readonly loops: ReadonlyArray<string>; readonly protection: ReadonlyArray<string>; readonly safetyFunctions: ReadonlyArray<string>; readonly programs: boolean }>
 }
@@ -51,6 +55,15 @@ const commandedWord = (old: string): string | null => {
   const commanded = old.match(/commanded (?:to )?(\w+)/)?.[1]
   return commanded === undefined ? null : `commanded ${STATE_WORDS[commanded === 'run' ? 'running' : commanded === 'stop' ? 'stopped' : commanded] ?? commanded.toUpperCase()}`
 }
+/** What the old drawing wrote for an item that is a value, not a state (a level, what passes a header), or nothing: no state word to keep. */
+const VALUE_WORDS = /^(level |carrying flow$|no flow$|no state drawn$)/
+/**
+ * Listed: an accumulator's check valve, which the old drawing judged by a flow value it did not have ("position not
+ * measured; no flow value"), reads the opening the model solves for it. Its discharge isolation valve, whose position
+ * the model does not solve, still reads "position not measured".
+ */
+const NOW_MEASURED = /\.checkValve$/
+
 /** controls.list's items as T01 recorded them. */
 const listedFacts = (items: ReadonlyArray<any>) => items.map(item => ({
   id: item.id,
@@ -100,6 +113,29 @@ describe('T39 plant swap parity', () => {
             expect([id, observation.why ?? null]).toEqual([id, commandedWord(word)])
           }
         })
+      })
+
+      test('P1b: each item the overview and the details drew with a state word declares its state in that word, the command it does not follow as its why, bound on its node', () => {
+        const words = itemWords.states[state.id]!
+        const worded = Object.entries({ ...words.details, ...words.overview }).filter(([, word]) => !VALUE_WORDS.test(word))
+        expect(worded.filter(([id]) => !declared.has(ref(`${id}.state`))).map(([id]) => id)).toEqual([])
+        const observed = read(instance, worded.map(([id]) => ref(`${id}.state`)))
+        const reads = (id: string): string => {
+          const observable = declared.get(ref(`${id}.state`))!
+          const observation = observed.get(ref(`${id}.state`))!
+          const word = observation.quality === 'not-applicable' ? '?' : observable.states!.find(stated => stated.value === observation.value)?.label ?? `unread ${String(observation.value)}`
+          return observation.why === undefined ? word : `${word} (${observation.why})`
+        }
+        const expected = (id: string, old: string): string => {
+          if (old.startsWith('position not measured')) return NOW_MEASURED.test(id) ? reads(id) : '? (position not measured)'
+          const word = stateWord(old, declared.get(ref(`${id}.state`))!.states!.map(stated => stated.label))
+          const commanded = commandedWord(old)
+          return commanded === null ? word : `${word} (${commanded})`
+        }
+        expect(worded.map(([id]) => [id, reads(id)])).toEqual(worded.map(([id, old]) => [id, expected(id, old)]))
+        // Each drawn item runs or conducts on its state observable, so a drawing writes its word and why.
+        const nodes = new Map(topology.nodes.map(node => [node.id, node]))
+        expect(worded.flatMap(([id]) => nodes.get(id) === undefined || nodes.get(id)!.bindings.some(binding => (binding.role === 'running' || binding.role === 'conducting') && binding.ref === ref(`${id}.state`)) ? [] : [id])).toEqual([])
       })
 
       test('P2: the latched actuations and their resets read the same, each reached from an item it holds', () => {

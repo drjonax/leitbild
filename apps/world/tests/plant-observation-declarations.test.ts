@@ -28,9 +28,9 @@ const observable = (path: string) => declaration.observables.find(candidate => c
 describe('plant observation declarations (P2)', () => {
   test('T12: every published or recorded signal is declared and parses against core\'s quantity list and unit codes', () => {
     expect(observationDeclarationSchema.parse(declaration)).toEqual(declaration)
-    // 1,102 signals, 45 operated items' states, 8 rod banks' travel, 6 safety functions and the operating mode.
-    expect(declaration.observables).toHaveLength(1162)
-    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(781)
+    // 1,102 signals, 81 items' states, 8 rod banks' travel, 6 safety functions and the operating mode.
+    expect(declaration.observables).toHaveLength(1198)
+    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(817)
     expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:802`)
   })
 
@@ -100,21 +100,28 @@ describe('plant observation declarations (P2)', () => {
     expect(declaration.observables.filter(entry => entry.element !== undefined && !elements.has(entry.element)).map(entry => entry.ref)).toEqual([])
   })
 
-  test('D1: each item a person operates declares its state as an enum in the words its controls use', () => {
+  test('D1: each item that runs, is live, or opens and shuts declares its state as an enum in the words its controls use', () => {
     const states = declaration.observables.filter(entry => entry.ref.endsWith('.state'))
-    expect(states).toHaveLength(45)
+    expect(states).toHaveLength(81)
     expect(states.every(entry => entry.valueType === 'enum' && entry.quantity === 'state' && entry.series === null && entry.thresholds.length === 0)).toBe(true)
     const words = (path: string) => [observable(path).label, observable(path).element, observable(path).states!.map(state => `${state.value}=${state.label}`).join(' ')]
-    expect([words('rcpA.state'), words('offsiteBreakerA.state'), words('mainSteamIsolationValveA.state'), words('pressurizer.reliefValve.state')]).toEqual([
+    const items = ['rcpA', 'offsiteBreakerA', 'mainSteamIsolationValveA', 'pressurizer.reliefValve', 'turbine', 'safetyBusA', 'pressurizer.safetyValves', 'safetyAccumulatorA.dischargeIsolationValve']
+    expect(items.map(item => words(`${item}.state`))).toEqual([
       ['State · RCP A', 'rcpA', 'on=RUN off=STOP'],
       ['State · Offsite BKR A', 'offsiteBreakerA', 'on=CLOSED off=OPEN'],
       ['State · MSIV A', 'mainSteamIsolationValveA', 'on=OPEN off=SHUT between=part open'],
-      ['State · PORV', 'pressurizer', 'on=OPEN off=SHUT between=part open'],
+      ['State · PORV', 'pressurizer.reliefValve', 'on=OPEN off=SHUT between=part open'],
+      // Offered only its trip, the turbine says its own state, in its declared words; a bus is live or dead; a code safety valve no one operates opens and shuts.
+      ['State · Turbine', 'turbine', 'on=ON LINE off=OFF LINE'],
+      ['State · Bus A', 'safetyBusA', 'on=LIVE off=DEAD'],
+      ['State · Safety valves', 'pressurizer.safetyValves', 'on=OPEN off=SHUT between=part open'],
+      // Its position the model does not solve: it is declared, and reads "position not measured".
+      ['State · ACC A discharge isolation valve', 'safetyAccumulatorA.dischargeIsolationValve', 'on=OPEN off=SHUT'],
     ])
-    // Q8: what runs or conducts marks its on state, the one a running or conducting binding reads as on; a valve's position marks none.
+    // Q8: the states a running or conducting binding reads as on: on, and a valve part open, which passes flow.
     const active = (path: string) => observable(path).states!.filter(state => state.active === true).map(state => state.value)
-    expect([active('rcpA.state'), active('offsiteBreakerA.state'), active('dieselGeneratorA.state'), active('mainSteamIsolationValveA.state'), active('pressurizer.reliefValve.state')]).toEqual([['on'], ['on'], ['on'], [], []])
-    expect(states.filter(entry => entry.states!.some(state => state.active === true)).length).toBe(states.filter(entry => !entry.states!.some(state => state.value === 'between')).length)
+    expect([active('rcpA.state'), active('offsiteBreakerA.state'), active('dieselGeneratorA.state'), active('mainSteamIsolationValveA.state'), active('pressurizer.reliefValve.state')]).toEqual([['on'], ['on'], ['on'], ['on', 'between'], ['on', 'between']])
+    expect(states.every(entry => entry.states!.every(state => (state.value === 'off') !== (state.active === true)))).toBe(true)
   })
 
   test('P9: the operating mode is the unit\'s state, an enum of its declared modes and the word for none holding', () => {
@@ -169,7 +176,22 @@ describe('plant observation declarations (P2)', () => {
     const narrowed = ask({ objectIds: [objectId], elementIds: ['pressurizer'] }).declarations[0]
     expect(narrowed.elements.map((element: { id: string }) => element.id)).toEqual(['pressurizer'])
     expect(narrowed.observables.every((entry: { element: string }) => entry.element === 'pressurizer')).toBe(true)
-    expect(narrowed.observables.filter((entry: { ref: string }) => entry.ref.endsWith('.state')).map((entry: { ref: string }) => entry.ref)).toEqual([`${objectId}#pressurizer.blockValve.state`, `${objectId}#pressurizer.reliefValve.state`])
+    // The relief and block valves the pressurizer bundles are elements of their own: their state, position, demand and flow are theirs.
+    expect(narrowed.observables.filter((entry: { ref: string }) => entry.ref.endsWith('.state'))).toEqual([])
+    const relief = ask({ objectIds: [objectId], elementIds: ['pressurizer.reliefValve'] }).declarations[0]
+    expect(relief.elements).toEqual([{ id: 'pressurizer.reliefValve', class: 'reliefValve', label: 'PORV', shortLabel: 'PORV' }])
+    expect(relief.observables.map((entry: { ref: string }) => entry.ref.slice(objectId.length + 1)).sort()).toEqual(RELIEF_VALVE_PATHS)
     expect(() => ask({ objectIds: ['plant:nowhere'] })).toThrow('No Process Plant plant:nowhere in this Run')
   })
 })
+
+/** What the PORV declares as an element of its own: its state, its position and demand, its flow, whether it flows, its failure. */
+const RELIEF_VALVE_PATHS: ReadonlyArray<string> = [
+  'pressurizer.reliefFlowKgPerS',
+  'pressurizer.reliefValve.state',
+  'pressurizer.reliefValveEffectivePositionFraction',
+  'pressurizer.reliefValveFailedPositionFraction',
+  'pressurizer.reliefValveFailureActive',
+  'pressurizer.reliefValveFlowing',
+  'pressurizer.reliefValvePositionFraction',
+]

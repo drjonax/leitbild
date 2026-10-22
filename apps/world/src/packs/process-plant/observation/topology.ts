@@ -7,7 +7,7 @@ import { linkCarrier } from '../graph/index.ts'
 import { plantCarriers, plantLoops, principalCircuits } from '../equipment/circuits.ts'
 import { electricalExternalPortId } from '../electrical-ports.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
-import { insertionPositions, operatedStateRoles } from './derived.ts'
+import { insertionPositions, itemStateRoles } from './derived.ts'
 
 // The Plant as World's `flow` topology (plan v3.1 §2.9, architecture A5):
 // equipment as nodes with the ports its pipes and cables join, each port's
@@ -162,22 +162,25 @@ const served = new WeakMap<CompiledProcessPlant, TopologyGraph>()
 
 /**
  * The topology the Plant serves World: its graph's, with the devices its
- * equipment bundles drawn on their lines, and each item a person operates
- * bound to its state observable (derived.ts) where no published signal says
- * it runs or conducts (a breaker's contacts, a condensate pump).
+ * equipment bundles drawn on their lines, and each item that runs, is live,
+ * or opens and shuts bound to its state observable (derived.ts) for running
+ * or conducting, so a drawing writes its word (RUN, SHUT, ON LINE) and the
+ * command it does not follow; a valve's glyph still opens with its position.
  */
 export const servedPlantTopology = (objectId: ObjectId, plant: CompiledProcessPlant): TopologyGraph => {
   const known = served.get(plant)
   if (known !== undefined && known.objectId === objectId) return known
   const topology = withDevices(objectId, plant.graph, plantTopology(objectId, plant.graph, plant.modelDigest))
-  const roles = operatedStateRoles(plant)
+  const roles = itemStateRoles(plant)
   const parts = insertionPositions(plant)
   const bound: TopologyGraph = { ...topology, nodes: topology.nodes.map(node => {
     const state = roles.get(node.id)
     // What it inserts (a core's rod banks), each part at the share of its travel it stands withdrawn.
     const positions = (parts.get(node.id) ?? []).map(path => ({ role: 'position' as const, ref: `${objectId}#${path}` }))
-    const stated = state === undefined || node.bindings.some(binding => binding.role === state.role) ? [] : [{ role: state.role, ref: `${objectId}#${state.path}` }]
-    return stated.length === 0 && positions.length === 0 ? node : { ...node, bindings: [...node.bindings, ...stated, ...positions] }
+    // Its state observable runs or conducts it in place of the signal it rests on: its word, and the command it does not follow.
+    const kept = state === undefined ? node.bindings : node.bindings.filter(binding => binding.role !== state.role)
+    const stated = state === undefined ? [] : [{ role: state.role, ref: `${objectId}#${state.path}` }]
+    return stated.length === 0 && positions.length === 0 ? node : { ...node, bindings: [...kept, ...stated, ...positions] }
   }) }
   served.set(plant, bound)
   return bound
