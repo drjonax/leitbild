@@ -60,6 +60,9 @@ export const symbolOf = (node: Pick<NodeView, 'class' | 'bindings'>, lines: Read
   }
 }
 
+/** The word a level reading is written with on a drawing (ISA's abbreviation). */
+export const LEVEL_WORD = 'LVL'
+
 /** A device's state: on, off, a position of travel (0 shut, 1 open), or not known. */
 export type DeviceState = { readonly kind: 'on' | 'off' | 'unknown' } | { readonly kind: 'position'; readonly fraction: number }
 
@@ -209,7 +212,9 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
             : { text: stateBinding.states === undefined ? '' : readingOf(stateBinding, 'enum').text, kind: 'word' as const }]),
         ...written.readings.map(ref => {
           const look = readingOf(view.bindings.find(entry => entry.ref === ref)!, 'number')
-          return { text: look.unit === '' ? look.text : `${look.text} ${look.unit}`, kind: 'reading' as const }
+          const value = look.unit === '' ? look.text : `${look.text} ${look.unit}`
+          // A level says it is one: its percent would read as a power or an opening (a core's "100.0 %" after a trip).
+          return { text: view.bindings.some(entry => entry.ref === ref && entry.role === 'level') ? `${LEVEL_WORD} ${value}` : value, kind: 'reading' as const }
         }),
       ]
     const lines = sized.filter(line => line.text !== '')

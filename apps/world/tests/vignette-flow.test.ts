@@ -191,14 +191,14 @@ describe('flow symbols', () => {
     expect(glyphOf('valve', { kind: 'unknown' }, false)).toEqual({ tag: 'obi-twoway-digital-static' })
   })
 
-  test('bindings drive the drawing: a level fills the tank, a group counts its running members, a position opens the valve, a flow fills its pipe', () => {
+  test('bindings drive the drawing: a level fills the tank and is written as one (LVL), a group counts its running members, a position opens the valve, a flow fills its pipe', () => {
     const drawing = flowDrawing(section, live, [], false)
     expect(drawing.vessels).toMatchObject([{ id: 'tank', kind: 'tank', level: 62, unknown: false }])
     expect(drawing.devices.map(device => [device.id, device.on, device.unknown, device.glyph])).toEqual([
       ['mover', true, false, { tag: 'obi-pump-on-horizontal' }],
       ['valve', true, false, { tag: 'obc-valve-analog-two-way-icon', value: 40 }],
     ])
-    expect(drawing.texts.map(text => text.lines.map(line => line.text))).toEqual([['Tank', '62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
+    expect(drawing.texts.map(text => text.lines.map(line => line.text))).toEqual([['Tank', 'LVL 62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
     const pipes = drawing.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0')
     expect(pipes.every(segment => segment.value === 'open-flow')).toBe(true)
     expect(pipes.some(segment => segment.kind === 'direction')).toBe(true)
@@ -239,7 +239,7 @@ describe('flow symbols', () => {
     expect(stale.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'empty')).toBe(true)
     // A reading outside its declared validity writes "—", never its value.
     const invalid = flowDrawing(section, [observation('unit:x#level', 62, 'not-applicable')], [], false)
-    expect(invalid.texts[0]!.lines.map(line => line.text)).toEqual(['Tank', '—'])
+    expect(invalid.texts[0]!.lines.map(line => line.text)).toEqual(['Tank', 'LVL —'])
     expect(invalid.vessels[0]).toMatchObject({ level: null, unknown: true })
     const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)
