@@ -10,7 +10,7 @@
   import ProcedureRunBadges from './procedures/ProcedureRunBadges.svelte'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from './procedures/procedure-run-selectors.ts'
 
-  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], completed: [] }
+  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], inactive: [] }
 
   interface Props {
     readonly object: OperationalObject
@@ -24,14 +24,14 @@
     readonly markSeen: (object: OperationalObject) => void
     readonly selectObject: (object: OperationalObject) => void
     /** Absent where this screen may not delete: a role Run's operator-class role sets. */
-    readonly deleteObject?: (object: OperationalObject) => Promise<void>
-    readonly detailPresentationFor?: (object: OperationalObject) => PackObjectPresentation | Promise<PackObjectPresentation>
-    readonly openProcessDisplay?: (object: OperationalObject) => void
-    readonly openProcedureSystem?: (object: OperationalObject) => void
-    readonly openProcedureSystemAt?: (object: OperationalObject, summary?: ProcedureRunSummary) => void
-    readonly openDroneControl?: (object: OperationalObject) => void
-    readonly openDroneProfileEditor?: (object: OperationalObject) => void
-    readonly procedureSummaries?: ProcedureRunSummaryGroup
+    readonly deleteObject?: ((object: OperationalObject) => Promise<void>) | undefined
+    readonly detailPresentationFor?: ((object: OperationalObject) => PackObjectPresentation | Promise<PackObjectPresentation>) | undefined
+    readonly openProcessDisplay?: ((object: OperationalObject) => void) | undefined
+    readonly openProcedureSystem?: ((object: OperationalObject) => void) | undefined
+    readonly openProcedureSystemAt?: ((object: OperationalObject, summary?: ProcedureRunSummary) => void) | undefined
+    readonly openDroneControl?: ((object: OperationalObject) => void) | undefined
+    readonly openDroneProfileEditor?: ((object: OperationalObject) => void) | undefined
+    readonly procedureSummaries?: ProcedureRunSummaryGroup | undefined
     readonly proceduresVisible: boolean
   }
 

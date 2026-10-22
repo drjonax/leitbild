@@ -25,7 +25,7 @@
   const processPlantCategoryId = 'process-plants'
   const proceduresFieldKey = 'procedures'
   const procedureFieldOption = { key: proceduresFieldKey, label: 'Procedures' } as const
-  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], completed: [] }
+  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], inactive: [] }
 
   interface Props {
     readonly status: string
@@ -47,7 +47,7 @@
     readonly markSeen: (object: OperationalObject) => void
     readonly selectObject: (object: OperationalObject) => void
     /** Absent where this screen may not delete: a role Run's operator-class role sets. */
-    readonly deleteObject?: (object: OperationalObject) => Promise<void>
+    readonly deleteObject?: ((object: OperationalObject) => Promise<void>) | undefined
     readonly openProcessDisplay?: (object: OperationalObject) => void
     readonly openProcedureSystem?: (object: OperationalObject) => void
     readonly openProcedureSystemAt?: (object: OperationalObject, summary?: ProcedureRunSummary) => void

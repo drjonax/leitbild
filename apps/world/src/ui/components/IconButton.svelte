@@ -1,9 +1,11 @@
 <script lang="ts">
-  import type { Component } from 'svelte'
+  import type { SvelteComponent } from 'svelte'
+  import type { IconProps } from 'lucide-svelte'
 
   interface Props {
     readonly label: string
-    readonly icon: Component
+    /** A lucide-svelte icon; the package declares its icons as Svelte 4 class components. */
+    readonly icon: typeof SvelteComponent<IconProps>
     readonly pressed?: boolean
     readonly disabled?: boolean
     readonly title?: string
