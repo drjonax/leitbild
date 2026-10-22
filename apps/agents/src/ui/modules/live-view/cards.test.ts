@@ -11,14 +11,16 @@ describe('answer cards in the chat', () => {
   test('a frozen card says when it was read, shows six lines and counts the rest the card and display hold', () => {
     const shown = frozenCard(card(8, 3))
     expect(shown.caption).toBe('FROZEN · sim 10:16:00')
+    // The live footer's mark for an Assistant's vignette (World provenanceMark), copied: never an operating display.
+    expect(shown.mark).toBe('AI-composed view · not an operating display')
     expect(shown.lines.map(line => line.text)).toEqual(Array.from({ length: 6 }, (_, index) => `k${index + 1} · Line ${index + 1} · loading · ${90 + index}.0 %`))
     expect(shown.more).toBe(5)
     expect(frozenCard({ ...card(1), at: { at: at.at, clock: 'wall' } }).caption).toBe('FROZEN · 10:16:00')
   })
 
   test('assistive technology reads the frozen card apart from the chip\'s action: title, time, lines and how many more', () => {
-    expect(frozenCardText('Loading', frozenCard(card(2, 1)))).toBe('Loading. FROZEN · sim 10:16:00. k1 · Line 1 · loading · 90.0 %. k2 · Line 2 · loading · 91.0 %. +1 more')
-    expect(frozenCardText('Loading', frozenCard(card(1)))).toBe('Loading. FROZEN · sim 10:16:00. k1 · Line 1 · loading · 90.0 %')
+    expect(frozenCardText('Loading', frozenCard(card(2, 1)))).toBe('Loading. FROZEN · sim 10:16:00. AI-composed view · not an operating display. k1 · Line 1 · loading · 90.0 %. k2 · Line 2 · loading · 91.0 %. +1 more')
+    expect(frozenCardText('Loading', frozenCard(card(1)))).toBe('Loading. FROZEN · sim 10:16:00. AI-composed view · not an operating display. k1 · Line 1 · loading · 90.0 %')
   })
 
   test('one read per answer turn, validated; a failed or broken read is kept as a refusal that says why', async () => {

@@ -29,17 +29,20 @@ export const createTurnCardsReader = (fetchJson: FetchJson): ((roomId: string, t
 }
 
 export const FROZEN_LINES = 6
+/** What an answer's vignette is, as its live footer says it (World's provenanceMark for an Assistant's view): never an operating display. */
+export const PROVENANCE_MARK = 'AI-composed view · not an operating display'
 
-/** What a chip shows of its card: when it was read, its first lines, and how many more the card and display hold. */
+/** What a chip shows of its card: when it was read, what it is, its first lines, and how many more the card and display hold. */
 export const frozenCard = (card: DisplayCard) => ({
   caption: `FROZEN · ${card.at.clock === 'simulation' ? 'sim ' : ''}${card.at.at.slice(11, 19)}`,
+  mark: PROVENANCE_MARK,
   lines: card.items.slice(0, FROZEN_LINES).map(item => ({ key: item.key, text: `${item.key} · ${item.label} · ${item.reading}` })),
   more: Math.max(0, card.items.length - FROZEN_LINES) + card.more,
 })
 
-/** A frozen card as assistive technology reads it, apart from the chip's action: title, time, lines, how many more. */
+/** A frozen card as assistive technology reads it, apart from the chip's action: title, time, what it is, lines, how many more. */
 export const frozenCardText = (title: string, frozen: ReturnType<typeof frozenCard>): string =>
-  [title, frozen.caption, ...frozen.lines.map(line => line.text), ...(frozen.more > 0 ? [`+${frozen.more} more`] : [])].join('. ')
+  [title, frozen.caption, frozen.mark, ...frozen.lines.map(line => line.text), ...(frozen.more > 0 ? [`+${frozen.more} more`] : [])].join('. ')
 
 /** The line a key names on the turn's cards, if any. */
 export const itemOf = (cards: TurnCardList, key: string): DisplayCardItem | undefined => {

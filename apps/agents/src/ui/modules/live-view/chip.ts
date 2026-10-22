@@ -68,6 +68,7 @@ const lines = (title: string, subtitle: string, options: { readonly titleTooltip
   second.textContent = options.card === undefined ? subtitle : 'refused' in options.card ? `${subtitle} · ${options.card.refused}` : options.card.caption
   text.append(first, second)
   if (options.card !== undefined && !('refused' in options.card)) {
+    text.append(Object.assign(document.createElement('span'), { className: 'block text-[11.5px] text-text-subtle', textContent: options.card.mark }))
     for (const line of options.card.lines) {
       const row = document.createElement('span')
       row.className = 'block truncate text-[11.5px] text-text-muted rounded'
