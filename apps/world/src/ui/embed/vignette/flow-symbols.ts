@@ -32,16 +32,26 @@ type Face = 'top' | 'right' | 'bottom' | 'left'
 
 export type FlowSymbol = 'vessel' | 'tank' | 'exchanger' | 'mover' | 'generator' | 'valve' | 'breaker' | 'transformer' | 'source' | 'bus' | 'header' | 'junction' | 'end'
 
-/** The OpenBridge equipment a node is drawn as, by its class and the media kinds of its drawn pipes; a bar is a bus or a header. */
-export const symbolOf = (node: Pick<NodeView, 'class' | 'bindings'>, media: ReadonlyArray<string>, bar: boolean): FlowSymbol => {
-  const electric = media.some(kind => kind === 'electric-ac' || kind === 'electric-dc')
+/** A line drawn at a node: its medium, and whether it leaves the node (flow runs from it). */
+export type DrawnLine = { readonly kind: string; readonly out: boolean }
+
+const isElectric = (kind: string): boolean => kind === 'electric-ac' || kind === 'electric-dc'
+
+/**
+ * The OpenBridge equipment a node is drawn as, by its class first, then by its drawn lines: an item is electrical only
+ * where every line drawn to it is (a valve drawn with its motor's supply stays a valve); a mover generates only where
+ * an electrical line leaves it, never because the line that drives it is all a drawing shows of it; a bar is a bus or
+ * a header.
+ */
+export const symbolOf = (node: Pick<NodeView, 'class' | 'bindings'>, lines: ReadonlyArray<DrawnLine>, bar: boolean): FlowSymbol => {
+  const electric = lines.length > 0 && lines.every(line => isElectric(line.kind))
   if (bar) return electric ? 'bus' : 'header'
   switch (node.class) {
     case 'source': return electric ? 'source' : 'vessel'
     case 'store': return 'tank'
     case 'transfer': return 'exchanger'
     case 'converter': return electric ? 'transformer' : 'exchanger'
-    case 'mover': return electric ? 'generator' : 'mover'
+    case 'mover': return lines.some(line => line.out && isElectric(line.kind)) ? 'generator' : 'mover'
     case 'switch': return electric ? 'breaker' : 'valve'
     // A sink whose flow turns it (a running binding) generates; one that only takes the flow ends the line.
     case 'sink': return node.bindings.some(binding => binding.role === 'running') ? 'generator' : 'end'
@@ -146,8 +156,10 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
   const symbols = new Map(section.layout.nodes.flatMap(node => {
     const view = byId.get(node.id)
     if (view === undefined) return []
-    const media = [...new Set(endsAt(node.id).flatMap(edge => (edge.view === undefined ? [] : [edge.view.mediumKind])))]
-    return [[node.id, symbolOf(view, media, thin(boxes.get(node.id)!))] as const]
+    const box = boxes.get(node.id)!
+    // A routed line runs from its source port: it leaves the node its first point is at.
+    const lines = endsAt(node.id).flatMap(edge => (edge.view === undefined ? [] : [{ kind: edge.view.mediumKind, out: inside(box)(edge.points[0]!) }]))
+    return [[node.id, symbolOf(view, lines, thin(box))] as const]
   }))
   const states = new Map([...symbols.keys()].map(id => [id, stateOf(byId.get(id)!)]))
 

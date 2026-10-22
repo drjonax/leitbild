@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Observation } from '../src/core/observation/model.ts'
 import type { TopologyGraph } from '../src/core/observation/topology.ts'
 import type { VignetteSection } from '../src/features/displays/compose/model.ts'
-import { FLOW_ROOM, overviewOf } from '../src/features/displays/compose/topology.ts'
+import { FLOW_ROOM, overviewOf, topologySection } from '../src/features/displays/compose/topology.ts'
 import { flowLayout } from '../src/features/displays/topology/flow-sizing.ts'
 import { groupName, type TopologyLayout } from '../src/features/displays/topology/layout.ts'
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
@@ -141,20 +141,40 @@ const section: Topology = {
 const live = [observation('unit:x#level', 62), observation('unit:x#runA', true), observation('unit:x#runB', false), observation('unit:x#open', 0.4), observation('unit:x#flowA', 12.5)]
 
 describe('flow symbols', () => {
-  test('OpenBridge equipment by class and the media of the drawn pipes', () => {
+  test('OpenBridge equipment by class first, then the drawn lines: a mover generates only where a power line leaves it', () => {
     const node = (cls: Topology['nodes'][number]['class'], running = false) => ({ class: cls, bindings: running ? [{ role: 'running' as const, ref: 'x#r', quantity: 'state' as const, unit: '' }] : [] })
-    expect(symbolOf(node('mover'), ['fluid'], false)).toBe('mover')
-    expect(symbolOf(node('mover'), ['electric-ac'], false)).toBe('generator')
-    expect(symbolOf(node('switch'), ['steam'], false)).toBe('valve')
-    expect(symbolOf(node('switch'), ['electric-ac'], false)).toBe('breaker')
-    expect(symbolOf(node('store'), ['fluid'], false)).toBe('tank')
-    expect(symbolOf(node('transfer'), ['fluid', 'steam'], false)).toBe('exchanger')
-    expect(symbolOf(node('source'), ['fluid'], false)).toBe('vessel')
-    expect(symbolOf(node('source'), ['electric-ac'], false)).toBe('source')
-    expect(symbolOf(node('sink', true), ['steam'], false)).toBe('generator')
-    expect(symbolOf(node('sink'), ['fluid'], false)).toBe('end')
-    expect(symbolOf(node('junction'), ['steam'], true)).toBe('header')
-    expect(symbolOf(node('bus'), ['electric-ac'], true)).toBe('bus')
+    const into = (...kinds: ReadonlyArray<string>) => kinds.map(kind => ({ kind, out: false }))
+    const outOf = (...kinds: ReadonlyArray<string>) => kinds.map(kind => ({ kind, out: true }))
+    expect(symbolOf(node('mover'), [...into('fluid'), ...outOf('fluid')], false)).toBe('mover')
+    // A mover drawn with the power line that drives it, or with only that line (a view around its bus), is still a mover.
+    expect(symbolOf(node('mover'), [...outOf('fluid'), ...into('electric-ac')], false)).toBe('mover')
+    expect(symbolOf(node('mover'), into('electric-ac'), false)).toBe('mover')
+    expect(symbolOf(node('mover'), outOf('electric-ac'), false)).toBe('generator')
+    // A valve with its motor's supply is still a valve.
+    expect(symbolOf(node('switch'), [...into('electric-ac'), ...outOf('steam')], false)).toBe('valve')
+    expect(symbolOf(node('switch'), outOf('steam'), false)).toBe('valve')
+    expect(symbolOf(node('switch'), outOf('electric-ac'), false)).toBe('breaker')
+    expect(symbolOf(node('store'), outOf('fluid'), false)).toBe('tank')
+    expect(symbolOf(node('transfer'), [...into('fluid'), ...outOf('steam')], false)).toBe('exchanger')
+    expect(symbolOf(node('source'), outOf('fluid'), false)).toBe('vessel')
+    expect(symbolOf(node('source'), outOf('electric-ac'), false)).toBe('source')
+    expect(symbolOf(node('sink', true), into('steam'), false)).toBe('generator')
+    expect(symbolOf(node('sink'), into('fluid'), false)).toBe('end')
+    expect(symbolOf(node('junction'), outOf('steam'), true)).toBe('header')
+    expect(symbolOf(node('bus'), outOf('electric-ac'), true)).toBe('bus')
+  })
+
+  test('four loops: around a bus, the movers it drives draw as movers and only its diesel generator as a generator', () => {
+    const graph = servedPlantTopology('plant:flow' as never, compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:flow', loopCount: 4 })))
+    for (const around of ['safetyBusA', 'unitBusA']) {
+      const scoped = scopeTopology(graph, { around: [around], reach: 1 })
+      if (!scoped.ok) throw new Error(scoped.refusal.code)
+      const drawn = flowLayout(scoped.scoped, ROOM)!
+      const drawing = flowDrawing(topologySection('plant:flow', 'process-plant', scoped.scoped, drawn, 30, () => undefined) as Topology, [], [], false)
+      const generators = drawing.devices.filter(device => device.glyph?.tag.startsWith('obi-electric-generator') === true).map(device => device.id)
+      expect(generators).toEqual(around === 'safetyBusA' ? ['dieselGeneratorA'] : [])
+      expect(drawing.devices.filter(device => device.glyph?.tag.startsWith('obi-pump') === true).length).toBeGreaterThan(0)
+    }
   })
 
   test('glyphs: static where the state is not known, no breaker glyph then, a valve\'s opening from its position', () => {
