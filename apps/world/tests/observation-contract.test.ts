@@ -148,6 +148,16 @@ describe('observation Capabilities', () => {
     expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [element, element] }).success).toBe(false)
   })
 
+  test('an element may name the element it is part of and what its detail leads with, in order, other elements\' values among them (Q22)', () => {
+    const valve = { id: 'sg-a.relief', class: 'valve', label: 'SG A relief', parent: 'sg-a', lead: ['unit-2#SG-A-NR-LVL', 'unit-2#FW-A-FLOW'] }
+    expect(observationDeclarationSchema.parse({ ...declaration, elements: [valve] }).elements[0]).toEqual(valve)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [{ ...valve, parent: 'sg-a.relief' }] }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [{ ...valve, lead: ['unit-2#SG-A-NR-LVL', 'unit-2#SG-A-NR-LVL'] }] }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [{ ...valve, lead: [] }] }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [{ ...valve, lead: Array.from({ length: 17 }, (_, index) => `unit-2#v${index}`) }] }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [{ ...valve, lead: ['SG-A-NR-LVL'] }] }).success).toBe(false)
+  })
+
   test('declarations answer unchanged for a revision the caller holds', () => {
     const output = observationShapes.declarations.output
     expect(output.parse({ declarations: [{ objectId: 'unit-2', revision: 'digest-1', unchanged: true }] }).declarations).toHaveLength(1)
