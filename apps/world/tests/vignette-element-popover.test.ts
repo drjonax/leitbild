@@ -6,7 +6,7 @@ import type { SimulationRunId } from '../src/core/model/index.ts'
 import { defaultDisplayEnvelope } from '../src/ui/process-display/default-display.ts'
 import type { DisplayFrameMessage } from '../src/ui/embed/display-frame-protocol.ts'
 import { createViewHost, type ReceivedMessage } from '../src/ui/embed/view-host.ts'
-import { elementOffer, openElementDefault } from '../src/ui/embed/vignette/popover.ts'
+import { elementOffer, elementParts, openElementDefault, POPOVER_MARGIN, popoverPlacement, popoverRoom, POPOVER_WIDTH } from '../src/ui/embed/vignette/popover.ts'
 
 // An element's pop-over operates the element only where a display window
 // presents its display. In a chat answer or a procedure tag's dialog it
@@ -82,6 +82,45 @@ describe('an element\'s pop-over by where its display is shown', () => {
     const guard = source.indexOf('if (elementOffer(where) !== \'actions\' || actionsAsked) return')
     expect(guard).toBeGreaterThan(0)
     expect(source.indexOf('loadEmbedPack(packId)')).toBeGreaterThan(guard)
-    expect(source).toContain('{#if offer === \'actions\'}')
+    expect(source).toContain('{#each elementParts(offer) as part (part)}')
+  })
+
+  test('in the display window its actions come first, a pending proposal\'s Approve with them, the default under them; elsewhere the default first', () => {
+    expect(elementParts('actions')).toEqual(['actions', 'default'])
+    expect(elementParts('open-in-window')).toEqual(['default', 'open-in-window'])
+    expect(elementParts('nothing')).toEqual(['default', 'nothing'])
+  })
+})
+
+describe('an element\'s pop-over on screen', () => {
+  // E2b: a valve's pop-over in the window was about 2,000 px tall in an 816 px embed (1440×900), Approve at y ≈ 1,014.
+  const embed = { width: 1440, height: 816 }
+  const tall = 2_000
+  const onScreen = (place: { x: number; y: number }, size: { width: number; height: number }, page: { width: number; height: number }, scale: number) =>
+    place.x >= POPOVER_MARGIN / scale - 1e-9 && place.y >= POPOVER_MARGIN / scale - 1e-9
+    && place.x + size.width / scale <= page.width - POPOVER_MARGIN / scale + 1e-9 && place.y + size.height / scale <= page.height - POPOVER_MARGIN / scale + 1e-9
+
+  test('it is never taller than the page on screen, less its margins, at any zoom', () => {
+    expect(popoverRoom(embed, 1)).toBe(816 - 2 * POPOVER_MARGIN)
+    expect(popoverRoom({ height: 636 }, 1)).toBe(636 - 2 * POPOVER_MARGIN)
+    // Zoomed in, the page has fewer px but the pop-over is drawn at 1 / zoom: its own px are the screen's.
+    expect(popoverRoom(embed, 1.27)).toBeCloseTo(816 * 1.27 - 2 * POPOVER_MARGIN)
+  })
+
+  test('held to its room, it stands wholly on screen beside its item near every edge, never over it', () => {
+    for (const scale of [0.75, 1, 1.27]) {
+      const page = { width: embed.width / scale, height: embed.height / scale }
+      const size = { width: POPOVER_WIDTH, height: Math.min(tall, popoverRoom(page, scale)) }
+      for (const item of [{ x: 40, y: 700, width: 48, height: 48 }, { x: page.width - 60, y: 20, width: 48, height: 48 }, { x: page.width - 60, y: page.height - 60, width: 48, height: 48 }, { x: page.width / 2, y: page.height / 2, width: 48, height: 48 }]) {
+        const place = popoverPlacement(item, size, page, scale)
+        expect(onScreen(place, size, page, scale)).toBe(true)
+        const covers = place.x < item.x + item.width && place.x + size.width / scale > item.x && place.y < item.y + item.height && place.y + size.height / scale > item.y
+        expect(covers).toBe(false)
+      }
+    }
+  })
+
+  test('on a page narrower than it, it keeps its left margin', () => {
+    expect(popoverPlacement({ x: 100, y: 100, width: 48, height: 48 }, { width: POPOVER_WIDTH, height: 300 }, { width: 320, height: 600 }, 1).x).toBe(POPOVER_MARGIN)
   })
 })

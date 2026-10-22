@@ -50,28 +50,40 @@ export interface Box {
   readonly height: number
 }
 
+/** The room a popover keeps from the page's edges, in its own px (on screen whatever the zoom). */
+export const POPOVER_MARGIN = 8
+
 /**
  * Where a popover goes, in the page's px: beside its item where it fits
  * (right, then left), else under or over it, so it never covers the item it
- * is about; clamped inside the page where nothing fits. `scale` is how much
- * the page is magnified on screen: the popover is drawn at 1/scale, so it
- * reads at 100 % whatever the display's zoom, and takes that much more room.
+ * is about; shifted inside the page's margins where nothing fits. `scale` is
+ * how much the page is magnified on screen: the popover is drawn at 1/scale,
+ * so it reads at 100 % whatever the display's zoom, and takes that much more
+ * room. Its height is never more than popoverRoom gives it.
  */
 export const popoverPlacement = (item: Box, popover: { readonly width: number; readonly height: number }, page: { readonly width: number; readonly height: number }, scale: number): { readonly x: number; readonly y: number } => {
   const width = popover.width / scale
   const height = popover.height / scale
   const gap = 8 / scale
-  const clampX = (x: number): number => Math.min(Math.max(0, x), Math.max(0, page.width - width))
-  const clampY = (y: number): number => Math.min(Math.max(0, y), Math.max(0, page.height - height))
+  const margin = POPOVER_MARGIN / scale
+  const clampX = (x: number): number => Math.min(Math.max(margin, x), Math.max(margin, page.width - margin - width))
+  const clampY = (y: number): number => Math.min(Math.max(margin, y), Math.max(margin, page.height - margin - height))
   const candidates = [
-    { x: item.x + item.width + gap, y: clampY(item.y), fits: item.x + item.width + gap + width <= page.width },
-    { x: item.x - gap - width, y: clampY(item.y), fits: item.x - gap - width >= 0 },
-    { x: clampX(item.x), y: item.y + item.height + gap, fits: item.y + item.height + gap + height <= page.height },
-    { x: clampX(item.x), y: item.y - gap - height, fits: item.y - gap - height >= 0 },
+    { x: item.x + item.width + gap, y: clampY(item.y), fits: item.x + item.width + gap + width <= page.width - margin },
+    { x: item.x - gap - width, y: clampY(item.y), fits: item.x - gap - width >= margin },
+    { x: clampX(item.x), y: item.y + item.height + gap, fits: item.y + item.height + gap + height <= page.height - margin },
+    { x: clampX(item.x), y: item.y - gap - height, fits: item.y - gap - height >= margin },
   ]
   const chosen = candidates.find(candidate => candidate.fits)
   return chosen === undefined ? { x: clampX(item.x + item.width + gap), y: clampY(item.y) } : { x: chosen.x, y: chosen.y }
 }
+
+/**
+ * The tallest a popover may be, in its own px: the page's height on screen
+ * less its margins, so all of it stands on screen at any size and zoom; what
+ * it holds beyond that scrolls inside it.
+ */
+export const popoverRoom = (page: { readonly height: number }, scale: number): number => Math.max(0, page.height * scale - 2 * POPOVER_MARGIN)
 
 /** A popover's width, in its own px. */
 export const POPOVER_WIDTH = 340
@@ -86,6 +98,19 @@ export const POPOVER_WIDTH = 340
 export type ElementOffer = 'actions' | 'open-in-window' | 'nothing'
 export const elementOffer = (opening: DisplayOpening | null): ElementOffer =>
   opening === 'window' ? 'actions' : opening === 'relay' ? 'open-in-window' : 'nothing'
+
+/** What an element's pop-over holds, besides its title. */
+export type ElementPart = 'actions' | 'default' | 'open-in-window' | 'nothing'
+
+/**
+ * Its parts in order: in the display window the Pack's actions first (a
+ * pending proposal and its Approve with them), the element's default under
+ * them; elsewhere the default first, then the way to the display window or
+ * the line saying where the element is operated, pinned at the foot of its
+ * scrolling body.
+ */
+export const elementParts = (offer: ElementOffer): ReadonlyArray<ElementPart> =>
+  offer === 'actions' ? ['actions', 'default'] : ['default', offer]
 
 /** The display an element's pop-over opened from, as the listing of the element's default names it (opened-display.ts). */
 export interface OpenedFrom {
