@@ -26,6 +26,8 @@ export const openBridgeNotice = (packages: ReadonlyArray<OpenBridgePackage>): st
 
 interface NoticeChunk {
   readonly type: 'chunk'
+  readonly fileName: string
+  code: string
   readonly moduleIds: ReadonlyArray<string>
   readonly viteMetadata?: { readonly importedCss: Set<string> }
 }
@@ -43,7 +45,8 @@ const openBridgeChunks = (bundle: Readonly<Record<string, NoticeChunk | NoticeAs
 
 /**
  * Adds the notice to every emitted script with OpenBridge code (as its
- * post-minification banner) and to the stylesheets those scripts import.
+ * post-minification banner, kept its first bytes) and to the stylesheets
+ * those scripts import.
  *
  * World serves its built files immutable, so each one's name must follow its
  * final bytes. A script's hash takes the notice in (augmentChunkHash). A
@@ -53,9 +56,9 @@ const openBridgeChunks = (bundle: Readonly<Record<string, NoticeChunk | NoticeAs
  * after this, and every chunk that preloads it imports the OpenBridge chunk,
  * whose hash the notice is in.
  */
-export const openBridgeLicenceNotice = (packages: ReadonlyArray<OpenBridgePackage>): Plugin => {
+export const openBridgeLicenceNotice = (packages: ReadonlyArray<OpenBridgePackage>): Plugin[] => {
   const notice = openBridgeNotice(packages)
-  return {
+  return [{
     name: 'leitbild:openbridge-licence-notice',
     outputOptions: options => ({
       ...options,
@@ -87,5 +90,21 @@ export const openBridgeLicenceNotice = (packages: ReadonlyArray<OpenBridgePackag
         }
       }
     },
-  }
+  }, {
+    // Vite writes its dynamic-import dependency map (`__vite__mapDeps`) at the top of a chunk that imports one
+    // lazily, after every banner (vite:build-import-analysis, generateBundle): the notice then moves back to the
+    // chunk's first bytes. The chunk's name already follows the notice (augmentChunkHash above).
+    name: 'leitbild:openbridge-licence-notice-first',
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        for (const chunk of openBridgeChunks(bundle as never)) {
+          if (chunk.code.startsWith(notice)) continue
+          const at = chunk.code.indexOf(`${notice}\n`)
+          if (at < 0) throw new Error(`${chunk.fileName} carries OpenBridge code without its notice`)
+          chunk.code = `${notice}\n${chunk.code.slice(0, at)}${chunk.code.slice(at + notice.length + 1)}`
+        }
+      },
+    },
+  }]
 }
