@@ -125,7 +125,7 @@ describe('fit caps and invariants', () => {
     const outcome = await composeVignette(run, spec(['unit:u9#speed'], [{ kind: 'values', signals: ['unit:u9#speed', ...names] }]))
     if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
     const [values] = outcome.state.views
-    expect(values?.kind === 'values' && values.refs.length).toBe(16)
+    expect(values?.kind === 'values' && values.refs?.length).toBe(16)
     expect(values?.kind === 'values' && values.refs).toContain('unit:u9#speed')
     expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: '4 values not shown' })
     expect(values?.rows).toBe(16)
@@ -171,7 +171,7 @@ describe('fit caps and invariants', () => {
 
   test('a current read over decades reads on the card as the readout prints it, 4.4×10⁻⁸ A, with the number it writes (docs audit)', () => {
     const object = run.objects.find(entry => entry.id === 'unit:u1')!
-    const current = observableSchema.parse({ ref: 'unit:u1#irCurrent', label: 'Intermediate range current', quantity: 'current', unit: 'A', valueType: 'number', series: null })
+    const current = observableSchema.parse({ ref: 'unit:u1#irCurrent', label: 'Intermediate range current', quantity: 'current', unit: 'A', valueType: 'number', series: null, decades: true })
     const item = valueItem({ observable: current, object }, { ref: current.ref, at: '2026-01-01T08:00:00.000Z', clock: 'simulation', value: 4.43e-8, quality: 'good', priority: 'none' })
     expect([item.reading, item.numbers]).toEqual(['4.4×10⁻⁸ A', [{ value: 4.4e-8, decimals: 9 }]])
     expect(assembleCard({ at: '2026-01-01T08:00:00.000Z', clock: 'simulation' }, [item], []).items[0]!.reading).toBe('4.4×10⁻⁸ A')

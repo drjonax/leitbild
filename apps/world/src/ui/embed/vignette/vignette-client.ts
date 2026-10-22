@@ -1,5 +1,8 @@
 // A vignette's link to its Run (architecture B): the view compiled once, then
 // one sample a second while the vignette can be seen, none while it cannot.
+// A values section that holds a lead request takes its values from each
+// sample, in the rows it reserved, so the lead follows its Pack's mode and
+// nothing else in the view moves.
 // The trend history is read with the first sample, and again with the first
 // after a gap (hidden, slow, or the Run reset), so no line is drawn across
 // time it did not see. It never loads a Run: one that is not loaded is asked
@@ -58,6 +61,24 @@ const realTimer: ScheduleTimer = (run, delayMs) => {
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/**
+ * The view as the latest sample draws it: each values section holding a lead request with the values it leads with
+ * now (the sample's `leads`), within its rows; every other section, and the view itself where none changed, as it was,
+ * so a drawing, its pop-over and the scroll stand as they were.
+ */
+export const viewWithLeads = (view: VignetteView, sample: VignetteSample): VignetteView => {
+  const leads = sample.leads
+  if (leads === undefined) return view
+  let changed = false
+  const sections = view.sections.map(section => {
+    const now = section.kind === 'values' && section.lead !== undefined ? leads[section.lead]?.slice(0, section.rows) : undefined
+    if (section.kind !== 'values' || now === undefined || (now.length === section.values.length && now.every((value, at) => value.ref === section.values[at]!.ref))) return section
+    changed = true
+    return { ...section, values: now }
+  })
+  return changed ? { ...view, sections } : view
+}
+
 /** Every trend pen with its horizon, by ref. */
 const pensOf = (view: VignetteView): ReadonlyArray<{ readonly ref: string; readonly seriesId: string; readonly horizonMs: number }> =>
   view.sections.flatMap(section => section.kind !== 'trend' ? [] : section.strips.flat().flatMap(pen =>
@@ -112,7 +133,7 @@ export const createVignetteSession = (config: {
       const value = observation?.quality === 'bad' || observation?.quality === 'not-applicable' ? undefined : observation?.value
       series.set(pen.ref, typeof value === 'number' ? appendPoint(recorded, { t: at, v: value }, at - pen.horizonMs) : recorded)
     }
-    update({ phase: 'live', view, latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
+    update({ phase: 'live', view: viewWithLeads(view, sample), latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
   }
 
   const sampleOnce = async (view: VignetteView, known: RunPresence | undefined): Promise<void> => {

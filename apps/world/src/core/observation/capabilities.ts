@@ -15,6 +15,20 @@ import { topologyGraphSchema } from './topology.ts'
 const revisionSchema = z.string().min(1).max(128)
 const unchangedSchema = z.object({ objectId: objectIdSchema, revision: revisionSchema, unchanged: z.literal(true) }).strict()
 
+/** A declared observable reading exactly this value: what a command reads once the action that writes it has acted. */
+const readingSchema = z.object({ ref: observableRefSchema, value: z.union([z.boolean(), z.number().finite(), z.string().min(1).max(80)]) }).strict()
+
+/**
+ * What an element leads with once it has been stopped (D-E, amending D-86): `lead`, what verifies the stop, first. It
+ * has been stopped while every reading of one of the `when` sets holds (the commands one action that stops it writes,
+ * as that action wrote them). Static: World reads the `when` refs each sample, so no Run stores a stop.
+ */
+export const stoppedLeadSchema = z.object({
+  when: z.array(z.array(readingSchema).min(1).max(16)).min(1).max(4),
+  lead: z.array(observableRefSchema).min(1).max(16),
+}).strict()
+  .refine(stopped => new Set(stopped.lead).size === stopped.lead.length, { message: 'a stop leads with each value once', path: ['lead'] })
+
 export const observationElementSchema = z.object({
   id: z.string().min(1).max(200),
   class: z.string().min(1).max(60),
@@ -28,6 +42,7 @@ export const observationElementSchema = z.object({
    * flows), as its Pack judges now (Q22): where that changes (an operating mode), the declaration's revision changes.
    */
   lead: z.array(observableRefSchema).min(1).max(16).optional(),
+  stopped: stoppedLeadSchema.optional(),
 }).strict()
   .refine(element => element.parent !== element.id, { message: 'an element is not its own parent', path: ['parent'] })
   .refine(element => element.lead === undefined || new Set(element.lead).size === element.lead.length, { message: 'an element leads with each value once', path: ['lead'] })
@@ -80,6 +95,7 @@ export const observationShapes = {
 
 export type ObservationCapabilityKind = keyof typeof observationShapes
 export type ObservationDeclaration = z.output<typeof observationDeclarationSchema>
+export type StoppedLead = z.output<typeof stoppedLeadSchema>
 
 /** A Pack's observation Capability: system audience, the core shape, the core inspect rule. */
 export const defineObservationCapability = (

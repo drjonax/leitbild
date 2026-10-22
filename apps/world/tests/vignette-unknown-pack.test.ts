@@ -35,19 +35,19 @@ describe('an unknown Pack gets vignettes from its declarations alone', () => {
 
   test('an entity-floor object: its core slots in words, numbers only from the object, and its map focus', async () => {
     const { view, sample, card, state } = await opened('site:base')
-    expect(view.sections.map(section => section.kind)).toEqual(['slots', 'map'])
+    expect(view.sections.map(section => section.kind)).toEqual(['slots', 'alerts', 'map'])
     expect(view.sections[0]?.kind === 'slots' && view.sections[0].slots.map(slot => slot.key)).toEqual(['status', 'lifecycle', 'age'])
     expect(sample.slots['site:base']).toMatchObject({ status: { value: 'open' }, lifecycle: { value: 'active' } })
-    expect(sample.maps[1]).toMatchObject({ positioned: 1, missing: 0, bounds: [[10.7387, 59.9365], [10.7387, 59.9365]] })
+    expect(sample.maps[2]).toMatchObject({ positioned: 1, missing: 0, bounds: [[10.7387, 59.9365], [10.7387, 59.9365]] })
     expect(card.items.map(item => item.label)).toEqual(['Base · Status', 'Base · Lifecycle', 'Base · Position age'])
     expect(state.by).toBeUndefined()
   })
 
   test('an element, an observable and a collection have their defaults too', async () => {
-    expect((await opened('unit:one#engine')).view.sections.map(section => section.kind)).toEqual(['values', 'topology'])
-    expect((await opened('unit:one#speed')).view.sections.map(section => section.kind)).toEqual(['values', 'topology'])
+    expect((await opened('unit:one#engine')).view.sections.map(section => section.kind)).toEqual(['values', 'alerts', 'topology'])
+    expect((await opened('unit:one#speed')).view.sections.map(section => section.kind)).toEqual(['values', 'alerts', 'topology'])
     const units = await opened({ of: { category: 'units', closed: false } })
-    expect(units.view.sections.map(section => section.kind)).toEqual(['entity', 'map'])
+    expect(units.view.sections.map(section => section.kind)).toEqual(['entity', 'alerts', 'map'])
     expect(units.sample.entities[0]?.rows.map(row => row.objectId)).toEqual(['unit:one', 'unit:two'])
     expect(units.view.title).toBe('Units')
   })

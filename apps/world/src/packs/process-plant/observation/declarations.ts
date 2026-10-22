@@ -8,15 +8,16 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
 import { icThresholdsForSignal, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
+import { logarithmicSpan } from '../quantity-text.ts'
 import { derivedObservables } from './derived.ts'
-import { elementLeads, leadDigest } from './leads.ts'
+import { elementLeads, elementStops, leadDigest } from './leads.ts'
 
 // What a Plant declares to World's observation layer (plan v3.1 §2.2, A1):
 // every signal it publishes and every signal the Run records, addressed
 // `<plant object id>#<variable path>` (the Historian's signal id), with the
 // I&C tag beside it, the equipment it is measured on, its limits projected
-// from the I&C rules (ic/thresholds.ts, the one reading of them) and its
-// recorded series. Labels are the unit's own: World writes "<object label> ·
+// from the I&C rules (ic/thresholds.ts, the one reading of them), its
+// recorded series, and whether it reads over decades (its span's). Labels are the unit's own: World writes "<object label> ·
 // <label>" (R25).
 
 /** What the Run records of a Plant: its series ids and the interval they are sampled at; null where it records none. */
@@ -199,6 +200,8 @@ const observableOf = (objectId: ObjectId, plant: CompiledProcessPlant, recording
     series: recording !== null && recording.seriesIds.has(seriesId) ? { seriesId, intervalMs: recording.intervalMs } : null,
     ...(binding.tagId === undefined ? {} : { tag: binding.tagId }),
     ...(qualifiedReadings(plant).has(String(binding.path)) ? { meaningfulWhile: `while ${qualifiedReadings(plant).get(String(binding.path))!.words}`.slice(0, 80) } : {}),
+    // A reading over a span of decades (an intermediate-range current) is written as a power of ten below its step (H9).
+    ...(logarithmicSpan(binding.limits?.instrumentSpan ?? binding.limits?.hardRange) ? { decades: true as const } : {}),
     element: elementOf(plant, binding),
   }
 }
@@ -228,7 +231,8 @@ const declarationCache = new WeakMap<CompiledProcessPlant, Map<string, Observati
 /**
  * The Plant's declaration: its equipment and lines as elements, and its observables (its signals, then those
  * derived.ts reads); only those on `elementIds` where named. Given the operating mode, each component leads with its
- * equipment key values in that mode (leads.ts, Q22), and each device it bundles names it as its parent.
+ * equipment key values in that mode (leads.ts, Q22), an energy end a trip commands what verifies its stop (D-E), and
+ * each device it bundles names it as its parent.
  */
 export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant, recording: PlantRecording, elementIds?: ReadonlyArray<string>, mode?: string | null): ObservationDeclaration => {
   const revision = declarationRevision(plant, recording, mode)
@@ -244,6 +248,14 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
     const leads: ReadonlyMap<string, ReadonlyArray<string>> = mode === undefined ? new Map() : elementLeads(plant, mode)
     // What a component's detail leads with, as declared values only, each once, at most 16.
     const leadOf = (id: string): Array<string> => [...new Set((leads.get(id) ?? []).map(path => `${objectId}#${path}`).filter(ref => declared.has(ref)))].slice(0, 16)
+    // What verifies its stop, once the commands of one trip commanding it read as written; only sets World can read.
+    const stopOf = (id: string): ObservationDeclaration['elements'][number]['stopped'] => {
+      const stop = elementStops(plant).get(id)
+      const lead = [...new Set((stop?.lead ?? []).map(path => `${objectId}#${path}`).filter(ref => declared.has(ref)))].slice(0, 16)
+      const when = (stop?.when ?? []).map(set => set.map(write => ({ ref: `${objectId}#${write.path}`, value: write.value as boolean | number | string })))
+        .filter(set => set.length <= 16 && set.every(reading => declared.has(reading.ref))).slice(0, 4)
+      return lead.length === 0 || when.length === 0 ? undefined : { when, lead }
+    }
     const declaration: ObservationDeclaration = {
       objectId,
       revision,
@@ -251,11 +263,13 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
       elements: [
         ...graph.components.map(component => {
           const lead = leadOf(String(component.id))
+          const stopped = stopOf(String(component.id))
           return {
             id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
             ...(component.metadata?.presentation?.shortLabel === undefined ? {} : { shortLabel: component.metadata.presentation.shortLabel }),
             ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
             ...(lead.length === 0 ? {} : { lead }),
+            ...(stopped === undefined ? {} : { stopped }),
           }
         }),
         // A device its equipment bundles (the pressurizer's relief and block valves) is an element of its own, drawn on its line.

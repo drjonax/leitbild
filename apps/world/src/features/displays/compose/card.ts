@@ -20,8 +20,9 @@ type Shown = { readonly value: number; readonly decimals: number }
 type Words = { readonly text: string; readonly number: Shown }
 
 const clock = (at: string): string => at.slice(11, 19)
-const shown = (value: number, unit: string, kind?: Quantity): Shown => numberShown(value, unit, kind)
-const quantity = (value: number, unit: string, kind?: Quantity): string => unitSymbol(unit) === '' ? numberText(value, unit, kind) : `${numberText(value, unit, kind)} ${unitSymbol(unit)}`
+const shown = (value: number, unit: string, kind?: Quantity, decades = false): Shown => numberShown(value, unit, kind, decades)
+const quantity = (value: number, unit: string, kind?: Quantity, decades = false): string =>
+  unitSymbol(unit) === '' ? numberText(value, unit, kind, decades) : `${numberText(value, unit, kind, decades)} ${unitSymbol(unit)}`
 const duration = (seconds: number): Words => { const { value, unit } = durationParts(seconds); return { text: `${value} ${unit}`, number: { value, decimals: 0 } } }
 const distance = (metres: number): Words => { const { value, unit } = distanceParts(metres); return { text: `${numberText(value, unit)} ${unit}`, number: shown(value, unit) } }
 /** A number as a slot of this unit code shows it: seconds as a duration, metres as a distance. */
@@ -34,8 +35,9 @@ export const valueItem = ({ observable, object }: Declared, observation: Observa
   const numbers: Shown[] = []
   // A reading that measures nothing now (meaningfulWhile off) reads "—", as a readout shows it.
   const notApplicable = observation?.quality === 'not-applicable'
+  const decades = observable.decades === true
   const word = notApplicable ? '—'
-    : typeof value === 'number' ? (numbers.push(shown(value, observable.unit, observable.quantity)), quantity(value, observable.unit, observable.quantity))
+    : typeof value === 'number' ? (numbers.push(shown(value, observable.unit, observable.quantity, decades)), quantity(value, observable.unit, observable.quantity, decades))
     : value === null ? 'no reading'
       : observable.states?.find(state => state.value === String(value))?.label ?? (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value))
   const threshold = observable.thresholds.find(entry => entry.id === observation?.timeToAct?.threshold)
@@ -48,7 +50,7 @@ export const valueItem = ({ observable, object }: Declared, observation: Observa
     ...(toAct !== undefined ? [`${threshold?.effect ?? 'limit'} in ${toAct.text}`] : [])]
   const near = typeof value === 'number' ? (limit: number) => Math.abs(limit - value) : () => 0
   const limits = [...observable.thresholds].sort((left, right) => Number(right.id === observation?.past) - Number(left.id === observation?.past) || near(left.value) - near(right.value))
-    .slice(0, 4).map(entry => shown(entry.value, observable.unit, observable.quantity))
+    .slice(0, 4).map(entry => shown(entry.value, observable.unit, observable.quantity, decades))
   return {
     label, reading: parts.join(' · ').slice(0, 120), ...(observable.unit === '' ? {} : { unit: observable.unit }), numbers,
     ...(limits.length === 0 ? {} : { limits }), ...(observation === undefined ? {} : { priority: observation.priority }), subject: { ref: observable.ref },

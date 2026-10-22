@@ -85,9 +85,10 @@ describe('readout', () => {
     expect(readingLook('Energised islands', 'number', undefined, { value: 1, unit: '1', quantity: 'count', thresholds: [] })).toMatchObject({ text: '1', decimals: 0 })
     expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ value: null, text: '?' })
     // A reading over decades is shown as written (the block's text value), never as NaN, which the block draws as "—".
-    const current = readingLook('Intermediate range current', 'number', undefined, { value: 4.4e-8, unit: 'A', thresholds: [] })
+    const current = readingLook('Intermediate range current', 'number', undefined, { value: 4.4e-8, unit: 'A', decades: true, thresholds: [] })
     expect(current).toMatchObject({ kind: 'number', text: '4.4×10⁻⁸', value: '4.4×10⁻⁸', unit: 'A' })
-    expect(readingLook('Leak rate', 'number', undefined, { value: 2.3e-12, unit: 'kg/s', thresholds: [] }).value).toBe('2.3×10⁻¹²')
+    // A leak rate's noise, not read over decades, reads 0 (H9).
+    expect(readingLook('Leak rate', 'number', undefined, { value: 2.3e-12, unit: 'kg/s', thresholds: [] })).toMatchObject({ text: '0', value: 0 })
     expect(readingLook('Leak rate', 'number', undefined, { value: 0, unit: 'kg/s', thresholds: [] }).value).toBe(0)
   })
 

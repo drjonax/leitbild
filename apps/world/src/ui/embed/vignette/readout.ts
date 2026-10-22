@@ -4,7 +4,7 @@
 // observation's own priority; a value without one (an entity's telemetry, a
 // core slot) is neutral, whatever its source calls it.
 import type { Priority } from '../../../core/model/alerts.ts'
-import { decimalsFor, numberText, unitSymbol, type Observable, type Observation, type Quantity } from '../../../core/observation/model.ts'
+import { numberShown, numberText, unitSymbol, type Observable, type Observation, type Quantity } from '../../../core/observation/model.ts'
 import { clockText, durationText } from './format.ts'
 
 type Threshold = Observable['thresholds'][number]
@@ -21,6 +21,8 @@ export interface ReadingInput {
   readonly unit: string
   /** The declared quantity, where there is one: a count reads whole, as the card writes it. */
   readonly quantity?: Quantity
+  /** Declared read over decades: below its step a power of ten, never 0 (numberShown). */
+  readonly decades?: true
   readonly thresholds: ReadonlyArray<Threshold>
   readonly quality?: Observation['quality']
   readonly priority?: Priority
@@ -124,7 +126,8 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
     : input.since !== undefined && valueType !== 'number' ? `since ${clockText(input.since.at)}` : null
   // A number or a duration reads as a number; a state, a text and an instant as a word.
   const state = (valueType !== 'number' && valueType !== 'duration') || typeof value === 'string' || typeof value === 'boolean'
-  const text = quality === 'not-applicable' ? '—' : unknown ? '?' : typeof value === 'number' ? numberText(value, input.unit, input.quantity)
+  const decades = input.decades === true
+  const text = quality === 'not-applicable' ? '—' : unknown ? '?' : typeof value === 'number' ? numberText(value, input.unit, input.quantity, decades)
     : valueType === 'instant' && typeof value === 'string' ? clockText(value) : stateWord(value, states)
   const number = !state && !unknown && quality !== 'not-applicable' && typeof value === 'number'
   return {
@@ -132,14 +135,15 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
     text,
     // A numeral reads back as the number the block formats; a power of ten is no numeral (Number() would be NaN).
     value: !number ? null : NUMERAL.test(text) ? Number(text) : text,
-    decimals: typeof value === 'number' ? decimalsFor(input.unit, value, input.quantity) : 0,
+    // The decimals the card writes it to: a value below its step reads as a zero does.
+    decimals: typeof value === 'number' ? numberShown(value, input.unit, input.quantity, decades).decimals : 0,
     // No number, no unit: a state, a reading not known, or one outside its declared validity ("—").
     unit: state || unknown || quality === 'not-applicable' ? '' : unitSymbol(input.unit),
     tone,
     emphasis: input.priority === 'notice',
     doubtful: quality === 'uncertain' || quality === 'stale',
     fill: unknown ? 'unknown' : activeState(value, states) === true ? 'filled' : 'hollow',
-    chip: passed === undefined || quality === 'not-applicable' ? null : { word: orderWord(passed), text: `${orderWord(passed)} ${numberText(passed.value, input.unit, input.quantity)}${passed.consequence === undefined ? '' : ` · ${passed.consequence}`}`, tone },
+    chip: passed === undefined || quality === 'not-applicable' ? null : { word: orderWord(passed), text: `${orderWord(passed)} ${numberText(passed.value, input.unit, input.quantity, decades)}${passed.consequence === undefined ? '' : ` · ${passed.consequence}`}`, tone },
     note,
     bar: typeof value === 'number' && !unknown && quality !== 'not-applicable' ? limitBar(value, input.thresholds, input.past) : null,
     title: [label, quality === 'good' ? '' : `quality: ${quality}`, input.why ?? ''].filter(part => part !== '').join(' · '),
@@ -147,14 +151,15 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
 }
 
 /** How a declared value reads in a sample. */
-export const valueLook = (value: Pick<Observable, 'valueType' | 'states' | 'unit' | 'thresholds' | 'quantity'> & { readonly label: string }, observations: ReadonlyArray<Observation>, ref: string): ReadingLook =>
+export const valueLook = (value: Pick<Observable, 'valueType' | 'states' | 'unit' | 'thresholds' | 'quantity' | 'decades'> & { readonly label: string }, observations: ReadonlyArray<Observation>, ref: string): ReadingLook =>
   readingLook(value.label, value.valueType, value.states, observedInput(value, observations.find(observation => observation.ref === ref)))
 
 /** An observation as a readout's input. */
-export const observedInput = (observable: Pick<Observable, 'unit' | 'thresholds' | 'quantity'>, observation: Observation | undefined): ReadingInput => ({
+export const observedInput = (observable: Pick<Observable, 'unit' | 'thresholds' | 'quantity' | 'decades'>, observation: Observation | undefined): ReadingInput => ({
   value: observation?.value,
   unit: observable.unit,
   quantity: observable.quantity,
+  ...(observable.decades === true ? { decades: true as const } : {}),
   thresholds: observable.thresholds,
   ...(observation === undefined ? {} : {
     quality: observation.quality,

@@ -95,11 +95,13 @@ describe('observation model', () => {
     expect([numberText(1, '1', 'count'), numberText(0.85, '1', 'fraction'), decimalsFor('1', 12, 'count')]).toEqual(['1', '0.85', 0])
   })
 
-  test('a value its decimals would write as 0, two decades or more below their step, reads over decades; a true zero reads 0 (docs audit)', () => {
+  test('a value declared read over decades reads below its step as a power of ten; any other as a zero reads (docs audit, H9)', () => {
     // The intermediate-range current the display shows as 4.4×10⁻⁸ A, not "0 A"; the card carries the number it writes.
-    expect([numberText(4.4e-8, 'A'), numberText(-2.26e-11, 'A'), numberText(0.004, 'A'), numberText(0, 'A'), numberText(0.6, 'A')]).toEqual(['4.4×10⁻⁸', '-2.3×10⁻¹¹', '4.0×10⁻³', '0', '1'])
-    expect([numberShown(4.4e-8, 'A'), numberShown(0, 'A'), numberShown(15.504, 'MPa')]).toEqual([{ value: 4.4e-8, decimals: 9 }, { value: 0, decimals: 0 }, { value: 15.5, decimals: 2 }])
-    // A deviation a step's tenth or so off zero still reads 0.0.
+    expect([numberText(4.4e-8, 'A', 'current', true), numberText(-2.26e-11, 'A', 'current', true), numberText(0.004, 'A', 'current', true), numberText(0, 'A', 'current', true)])
+      .toEqual(['4.4×10⁻⁸', '-2.3×10⁻¹¹', '4.0×10⁻³', '0'])
+    expect([numberShown(4.4e-8, 'A', 'current', true), numberShown(0, 'A'), numberShown(15.504, 'MPa')]).toEqual([{ value: 4.4e-8, decimals: 9 }, { value: 0, decimals: 0 }, { value: 15.5, decimals: 2 }])
+    // Not declared so: a value below its step reads 0, a leak rate's noise among them; a deviation a step's tenth off zero reads 0.0.
+    expect([numberText(4.4e-8, 'A'), numberText(2.3e-12, 'kg/s'), numberText(0.6, 'A')]).toEqual(['0', '0', '1'])
     expect([numberText(-0.04, '%'), numberText(0.004, 'degC')]).toEqual(['0.0', '0.0'])
   })
 })
