@@ -7,7 +7,7 @@ import { overviewCandidates, overviewKeyValues, plantNowOf } from '../ic/key-val
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantSignalQuality } from '../signals.ts'
 import { evaluateSafetyFunctions, type SafetyFunctionEvaluation } from '../safety-functions.ts'
-import { declaredObservable, type PlantRecording } from './declarations.ts'
+import { declaredObservable, qualifiedReadings, type PlantRecording } from './declarations.ts'
 import { readDerived } from './derived.ts'
 
 // A Plant's values as World reads them (plan v3.1 §2.2): the value and its
@@ -58,6 +58,11 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
     if (declared === null) return null
     const binding = plant.graph.signalBindingByPath.get(path as VariablePath)
     if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation', ...(ranked ? { rank: index + 1 } : {}) }
+    // A reading the model qualifies measures nothing while its flag is off: no value, not applicable, never a colour.
+    const qualified = qualifiedReadings(plant).get(path)
+    if (qualified !== undefined && system.runtime.readVariableSnapshot(qualified.flag).value !== true) {
+      return { ref: declared.ref, value: null, quality: 'not-applicable', at: context.simulationTime, clock: 'simulation', priority: 'none', why: `measures nothing unless ${qualified.words}`, ...(ranked ? { rank: index + 1 } : {}) }
+    }
     const variable = system.runtime.readVariableSnapshot(binding.path)
     const limitsOf = (ruleId: string) => declared.thresholds.filter(threshold => threshold.id === ruleId || threshold.id.startsWith(`${ruleId}#`))
     const reading = typeof variable.value === 'number' ? variable.value : null

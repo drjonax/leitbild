@@ -88,9 +88,11 @@ describe('plant observation read (P3)', () => {
     // On a failure the evidence prints: each value off neutral or off good with what set it, the plant's mode and alarms, and the plant time.
     const evidence = `plant at 10:00:10: ${JSON.stringify(facts.atPowerPlant)}`
     expect(facts.atPower, evidence).toHaveLength(refs.length)
-    // Off good only where the model solves nothing to read: an accumulator's discharge isolation valve reads "position not measured".
-    expect(facts.atPower.filter((observation: Observation) => observation.quality === 'not-applicable').map(path)).toEqual(['A', 'B', 'C', 'D'].map(loop => `safetyAccumulator${loop}.dischargeIsolationValve.state`))
-    expect(facts.atPower.filter((observation: Observation) => observation.priority !== 'none' || (observation.quality !== 'good' && observation.why !== 'position not measured'))
+    // Off good only where nothing is there to read: the source range, its high voltage off above P-6, measures nothing
+    // (meaningfulWhile), and an accumulator's discharge isolation valve reads "position not measured".
+    expect(facts.atPower.filter((observation: Observation) => observation.quality === 'not-applicable').map(path))
+      .toEqual(['core.sourceRangeCountRateCps', 'core.sourceRangeStartupRateDpm', ...['A', 'B', 'C', 'D'].map(loop => `safetyAccumulator${loop}.dischargeIsolationValve.state`)])
+    expect(facts.atPower.filter((observation: Observation) => observation.priority !== 'none' || (observation.quality !== 'good' && observation.quality !== 'not-applicable'))
       .map((observation: Observation) => ({ ref: path(observation), value: observation.value, priority: observation.priority, quality: observation.quality, why: observation.why, at: observation.at })), evidence).toEqual([])
     expect(facts.atPower.filter((observation: Observation) => observation.clock !== 'simulation' || observation.at !== '2026-01-01T10:00:10.000Z')
       .map((observation: Observation) => ({ ref: path(observation), at: observation.at, clock: observation.clock })), evidence).toEqual([])

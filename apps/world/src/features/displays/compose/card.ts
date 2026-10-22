@@ -32,14 +32,17 @@ export const valueItem = ({ observable, object }: Declared, observation: Observa
   const label = `${object.label} · ${observable.label}`.slice(0, 80)
   const value = observation?.value ?? null
   const numbers: Shown[] = []
-  const word = typeof value === 'number' ? (numbers.push(shown(value, observable.unit, observable.quantity)), quantity(value, observable.unit, observable.quantity))
+  // A reading that measures nothing now (meaningfulWhile off) reads "—", as a readout shows it.
+  const notApplicable = observation?.quality === 'not-applicable'
+  const word = notApplicable ? '—'
+    : typeof value === 'number' ? (numbers.push(shown(value, observable.unit, observable.quantity)), quantity(value, observable.unit, observable.quantity))
     : value === null ? 'no reading'
       : observable.states?.find(state => state.value === String(value))?.label ?? (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value))
   const threshold = observable.thresholds.find(entry => entry.id === observation?.timeToAct?.threshold)
   const toAct = observation?.timeToAct === undefined ? undefined : duration(observation.timeToAct.seconds)
   if (toAct !== undefined) numbers.push(toAct.number)
   const parts = [word,
-    ...(observation !== undefined && observation.quality !== 'good' ? [observation.quality] : []),
+    ...(observation !== undefined && observation.quality !== 'good' && !notApplicable ? [observation.quality] : []),
     ...(atLeastCaution(observation?.priority) ? [observation!.priority] : []),
     ...(observation?.since !== undefined ? [`since ${clock(observation.since.at)}`] : []),
     ...(toAct !== undefined ? [`${threshold?.effect ?? 'limit'} in ${toAct.text}`] : [])]

@@ -1,7 +1,7 @@
 import { recordingSeriesIdFor, type ObjectId } from '../../../core/model/index.ts'
 import type { ObservationDeclaration } from '../../../core/observation/capabilities.ts'
 import type { Observable } from '../../../core/observation/model.ts'
-import type { CompiledComponent, ProcessSignalBinding, ProcessUnit } from '../graph/index.ts'
+import type { CompiledComponent, ProcessSignalBinding, ProcessUnit, VariablePath } from '../graph/index.ts'
 import { equipmentItemLabel } from '../equipment/items.ts'
 import { isInjectedFault } from '../signals.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
@@ -120,6 +120,26 @@ const deviceVariables = (plant: CompiledProcessPlant): ReadonlyMap<string, strin
 const elementOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string =>
   deviceVariables(plant).get(String(binding.path)) ?? String(binding.path).split('.')[0]!
 
+const qualifiedByPlant = new WeakMap<CompiledProcessPlant, ReadonlyMap<string, { readonly flag: VariablePath; readonly words: string }>>()
+
+/**
+ * The readings the model qualifies (component semantics meaningfulWhile, the
+ * old faceplate's and quick look's validity rules): each measures something
+ * only while its flag is on (a turbine's speed while it is on line, a source
+ * range's count rate while its high voltage is on), with the words for that
+ * condition: its flag's declared on word, else its label.
+ */
+export const qualifiedReadings = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly flag: VariablePath; readonly words: string }> => qualifiedByPlant.get(plant) ?? (() => {
+  const graph = plant.graph
+  const qualified = new Map(graph.components.flatMap(component => component.semantics.meaningfulWhile.flatMap(rule => {
+    const local = String(rule.flag).slice(String(component.id).length + 1)
+    const words = component.metadata?.presentation?.states?.[local]?.on ?? graph.signalBindingByPath.get(rule.flag)?.label ?? String(rule.flag)
+    return rule.variables.map(variable => [String(variable), { flag: rule.flag, words }] as const)
+  })))
+  qualifiedByPlant.set(plant, qualified)
+  return qualified
+})()
+
 /** Whether the Plant declares the signal: it publishes it, or the Run records it; never a fault the scenario injects (isInjectedFault). */
 const declares = (plant: CompiledProcessPlant, recording: PlantRecording, binding: ProcessSignalBinding): boolean =>
   !isInjectedFault(binding) && (binding.published || recording?.seriesIds.has(recordingSeriesIdFor(plant.id, binding.path)) === true)
@@ -178,6 +198,7 @@ const observableOf = (objectId: ObjectId, plant: CompiledProcessPlant, recording
     basis: isDemand(binding) ? 'command' : readsAsMeasured(binding) && binding.simulatorOnly !== true ? 'instrument' : 'model',
     series: recording !== null && recording.seriesIds.has(seriesId) ? { seriesId, intervalMs: recording.intervalMs } : null,
     ...(binding.tagId === undefined ? {} : { tag: binding.tagId }),
+    ...(qualifiedReadings(plant).has(String(binding.path)) ? { meaningfulWhile: `while ${qualifiedReadings(plant).get(String(binding.path))!.words}`.slice(0, 80) } : {}),
     element: elementOf(plant, binding),
   }
 }
