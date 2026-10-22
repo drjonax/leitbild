@@ -21,13 +21,15 @@ import type { ScopedTopology } from './scope.ts'
 
 /**
  * The renderer's grid pitch and its text lines (16 high, about 8 a character), in the engine's units; a reading's
- * value takes up to ten characters ("15.51 MPa"), and the word written before it (layout.ts readingWord) its own
- * characters and a space beside them ("LVL 100.0 %").
+ * value takes up to ten characters ("15.51 MPa"). A level's reading is written after its word (layout.ts
+ * readingWord) and reads its percent of span, by which it fills its vessel: at most seven characters ("LVL 100.0 %").
+ * A level's room of word and ten characters would leave the four-loop overview no room for any reading.
  */
 const GRID = 24
 export const FLOW_TEXT_LINE = { height: 16, perCharacter: 8 } as const
 export const READING_CHARACTERS = 10
-const readingCharacters = (word: string | null): number => READING_CHARACTERS + (word === null ? 0 : word.length + 1)
+const LEVEL_VALUE_CHARACTERS = '100.0 %'.length
+const readingCharacters = (word: string | null): number => (word === null ? READING_CHARACTERS : word.length + 1 + LEVEL_VALUE_CHARACTERS)
 /** A state word ("ON LINE", "part open"), or in its place the command the item does not follow ("CMD RUN", "CMD CLOSED"). */
 export const STATE_CHARACTERS = 10
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */

@@ -252,9 +252,10 @@ describe('flow symbols', () => {
 describe('text room (UX audit #68; plan §5.5, containment)', () => {
   // Every line a drawn item writes stays inside the box its layout kept for it, at the sizing's width a character:
   // its name, its state word or the command it does not follow ("commanded RUN" ran 32 px past the RCPs' boxes on
-  // Run A), and each reading at the longest value the sizing reserves a reading for, a level's with its word before
-  // it ("LVL 100.0 %" ran one character past its box). Generic: every item of the declared
-  // overview at two to four loops and of the neighbourhoods an element's default draws.
+  // Run A), and each reading at the longest value the sizing reserves a reading for, a level full with its word
+  // before it ("LVL 100.0 %" ran one character past its box); and every level is written, so no room taken for a
+  // word costs a drawing its readings. Generic: every item of the declared overview at two to four loops and of the
+  // neighbourhoods an element's default draws.
   type Declared = Pick<Observable, 'quantity' | 'unit' | 'states'>
   /** A value whose reading takes all of the characters the sizing reserves for a value (READING_CHARACTERS). */
   const widest = (declared: Declared): number => {
@@ -272,10 +273,12 @@ describe('text room (UX audit #68; plan §5.5, containment)', () => {
     const declared = new Map(plantDeclaration(objectId as never, plant, null).observables.map(observable => [observable.ref, observable]))
     const scoped = request === 'overview' ? overviewOf(served)! : (() => { const result = scopeTopology(served, request); if (!result.ok) throw new Error(result.refusal.code); return result.scoped })()
     const section = topologySection(objectId, 'process-plant', scoped, flowLayout(scoped, ROOM)!, 37, ref => declared.get(ref)) as Topology
+    /** A reading bound as a level (under any of its bindings) reads its percent of span: at its fullest, 100 %. */
+    const levels = new Set(section.nodes.flatMap(node => node.bindings.filter(binding => binding.role === 'level').map(binding => binding.ref)))
     // Each state at its longest word, then each item not following a command to either end of its travel, which
     // stands in its state word's place (derived.ts commandNotFollowed); every reading at its longest.
     const read = (state: (binding: Topology['nodes'][number]['bindings'][number]) => Observation | null) =>
-      section.nodes.flatMap(node => node.bindings.map(binding => (binding.states === undefined ? null : state(binding)) ?? observation(binding.ref, widest(binding))))
+      section.nodes.flatMap(node => node.bindings.map(binding => (binding.states === undefined ? null : state(binding)) ?? observation(binding.ref, levels.has(binding.ref) ? 100 : widest(binding))))
     // The items whose state can stand apart from their command: a control commands it and it travels (derived.ts unfollowed).
     const commandable = new Set(plantControlsFor(plant).items.filter(item => {
       const component = plant.graph.components[item.item.component]!
@@ -288,11 +291,12 @@ describe('text room (UX audit #68; plan §5.5, containment)', () => {
     }
     return [read(binding => observation(binding.ref, longestState(binding)!)), read(commanded('on')), read(commanded('off'))].flatMap(observations => {
       const drawing = flowDrawing(section, observations, [], false)
-      return drawing.texts.flatMap(text => [
+      const levelled = section.nodes.filter(node => node.bindings.some(binding => binding.role === 'level')).map(node => node.id)
+      return [...levelled.filter(id => drawing.texts.some(text => text.id === id) && !drawing.texts.some(text => text.id === id && text.lines.some(line => line.text.startsWith('LVL ')))).map(id => `${id}: its level is not written`), ...drawing.texts.flatMap(text => [
         ...(text.x < 0 || text.x + text.width > drawing.width ? [`${text.id}: its box leaves the drawing`] : []),
         ...text.lines.filter(line => line.text.length * FLOW_TEXT_LINE.perCharacter > text.width)
           .map(line => `${text.id}: "${line.text}" needs ${line.text.length * FLOW_TEXT_LINE.perCharacter} px of its ${text.width}`),
-      ])
+      ])]
     })
   }
 
