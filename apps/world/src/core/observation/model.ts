@@ -65,6 +65,8 @@ type UnitCode = (typeof quantityUnits)[Quantity][number]
  */
 export const unitDecimals: Readonly<Partial<Record<UnitCode, number>>> = {
   MPa: 2, Pa: 0, '%': 1, degC: 1, 'kg/s': 0, MW: 0, kW: 0, Mvar: 0, Hz: 2, kV: 1, V: 0, A: 0, 'm/s': 1, 'mm/h': 1, m: 0, rpm: 0, ppm: 0, 'mSv/h': 3, cps: 0, '1': 2, deg: 0, s: 0,
+  // A startup rate reads in hundredths of a decade a minute, so its noise reads 0.00, never -0.000003 (H9).
+  DPM: 2,
 }
 /** Quantities whose every value is whole, whatever their unit code: a count of '1' reads 3, not 3.00. */
 export const quantityDecimals: Readonly<Partial<Record<Quantity, number>>> = { count: 0 }
@@ -79,22 +81,25 @@ export const decadeParts = (value: number): { readonly text: string; readonly va
   const [mantissa, exponent] = value.toExponential(1).split('e') as [string, string]
   return { text: `${mantissa}×10${[...String(Number(exponent))].map(character => SUPERSCRIPTS[character] ?? character).join('')}`, value: Number(value.toExponential(1)), decimals: Math.max(0, 1 - Number(exponent)) }
 }
+/** Whether a value is written as a power of ten: read over decades (its Pack declares it) and below the step its decimals show. */
+const overDecades = (value: number, decimals: number, decades: boolean): boolean => decades && value !== 0 && Math.abs(value) < 10 ** -decimals
 /**
- * A number at its decimals, never "-0.0". A value two decades or more below the step its decimals show, which they
- * would write as 0 (an intermediate-range current, 4.4×10⁻⁸ A), is written as a reading over decades is (decadeParts);
- * a true zero, and a value a step's tenth or so off zero (a deviation of -0.04 %), read 0.
+ * The number numberText writes, and the decimals it is written to. Below the step its decimals show, a value reads as
+ * a zero reads, never "-0" (a leak rate of 2.3×10⁻¹² kg/s reads 0 kg/s, a deviation of -0.04 % reads 0.0 %); only a
+ * quantity its Pack declares read over decades (`decades`: an intermediate-range current) is written there as its
+ * power of ten, at its mantissa's decimals (4.4×10⁻⁷ A).
  */
-export const numberText = (value: number, unit: string, quantity?: Quantity): string => {
+export const numberShown = (value: number, unit: string, quantity?: Quantity, decades = false): { readonly value: number; readonly decimals: number } => {
   const decimals = decimalsFor(unit, value, quantity)
-  if (value !== 0 && Math.abs(value) < 10 ** -decimals / 100) return decadeParts(value).text
-  const text = value.toFixed(decimals)
-  return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
+  if (overDecades(value, decimals, decades)) { const decade = decadeParts(value); return { value: decade.value, decimals: decade.decimals } }
+  const shown = Number(value.toFixed(decimals))
+  return shown === 0 ? { value: 0, decimals: decimalsFor(unit, 0, quantity) } : { value: shown, decimals }
 }
-/** The number numberText writes, and the decimals it is written to (a reading over decades: its mantissa's, at its power of ten). */
-export const numberShown = (value: number, unit: string, quantity?: Quantity): { readonly value: number; readonly decimals: number } => {
-  const decimals = decimalsFor(unit, value, quantity)
-  if (value !== 0 && Math.abs(value) < 10 ** -decimals / 100) { const decade = decadeParts(value); return { value: decade.value, decimals: decade.decimals } }
-  return { value: Number(value.toFixed(decimals)), decimals }
+/** A number as every display and card writes it (numberShown): at its decimals, as a zero below its step, over decades as a power of ten. */
+export const numberText = (value: number, unit: string, quantity?: Quantity, decades = false): string => {
+  if (overDecades(value, decimalsFor(unit, value, quantity), decades)) return decadeParts(value).text
+  const shown = numberShown(value, unit, quantity)
+  return shown.value.toFixed(shown.decimals)
 }
 /** Seconds as a countdown reads them (45 s, 4 min, 2 h), and metres as a distance (850 m, 12.3 km): the number and the unit it is shown in. */
 export const durationParts = (seconds: number): { readonly value: number; readonly unit: 's' | 'min' | 'h' } =>
@@ -134,6 +139,8 @@ export const observableSchema = z.object({
   element: z.string().min(1).max(200).optional(),
   /** The Pack's declared lead rank, 1 first; an observation's mode-aware `rank` goes before it. */
   lead: z.number().int().positive().optional(),
+  /** Read over decades (an intermediate-range current): below the step its decimals show, written as a power of ten, never as 0. */
+  decades: z.literal(true).optional(),
 }).strict().refine(observable => (quantityUnits[observable.quantity] as ReadonlyArray<string>).includes(observable.unit), {
   path: ['unit'], message: 'the unit is not a code listed for this quantity',
 })

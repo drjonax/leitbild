@@ -8,6 +8,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
 import { icThresholdsForSignal, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
+import { logarithmicSpan } from '../quantity-text.ts'
 import { derivedObservables } from './derived.ts'
 import { elementLeads, elementStops, leadDigest } from './leads.ts'
 
@@ -15,8 +16,8 @@ import { elementLeads, elementStops, leadDigest } from './leads.ts'
 // every signal it publishes and every signal the Run records, addressed
 // `<plant object id>#<variable path>` (the Historian's signal id), with the
 // I&C tag beside it, the equipment it is measured on, its limits projected
-// from the I&C rules (ic/thresholds.ts, the one reading of them) and its
-// recorded series. Labels are the unit's own: World writes "<object label> ·
+// from the I&C rules (ic/thresholds.ts, the one reading of them), its
+// recorded series, and whether it reads over decades (its span's). Labels are the unit's own: World writes "<object label> ·
 // <label>" (R25).
 
 /** What the Run records of a Plant: its series ids and the interval they are sampled at; null where it records none. */
@@ -199,6 +200,8 @@ const observableOf = (objectId: ObjectId, plant: CompiledProcessPlant, recording
     series: recording !== null && recording.seriesIds.has(seriesId) ? { seriesId, intervalMs: recording.intervalMs } : null,
     ...(binding.tagId === undefined ? {} : { tag: binding.tagId }),
     ...(qualifiedReadings(plant).has(String(binding.path)) ? { meaningfulWhile: `while ${qualifiedReadings(plant).get(String(binding.path))!.words}`.slice(0, 80) } : {}),
+    // A reading over a span of decades (an intermediate-range current) is written as a power of ten below its step (H9).
+    ...(logarithmicSpan(binding.limits?.instrumentSpan ?? binding.limits?.hardRange) ? { decades: true as const } : {}),
     element: elementOf(plant, binding),
   }
 }

@@ -199,7 +199,7 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     // kept room for, in their order, an empty one left out.
     const counted = members.length > 1 ? members.map(stateOf) : []
     const role = members[0]!.bindings.some(binding => binding.role === 'running') ? 'RUN' : 'ON'
-    const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, shownReading(binding)))
+    const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ ...binding, thresholds: [] }, shownReading(binding)))
     const written = itemText(view.bindings)
     const stateBinding = view.bindings.find(binding => binding.ref === written.state)
     const sized: ReadonlyArray<FlowLine> = members.length > 1

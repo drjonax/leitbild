@@ -86,7 +86,7 @@ export type VignetteState = z.output<typeof vignetteStateSchema>
 export type VignetteElement = Omit<ObservationDeclaration['elements'][number], 'lead' | 'stopped'>
 
 /** A declared observable as a vignette names it: its label qualified with its object's ("<object> · <observable>", R25). */
-export type VignetteValue = Pick<Observable, 'ref' | 'quantity' | 'unit' | 'valueType' | 'states' | 'thresholds' | 'series'> & {
+export type VignetteValue = Pick<Observable, 'ref' | 'quantity' | 'unit' | 'valueType' | 'states' | 'thresholds' | 'series' | 'decades'> & {
   readonly label: string
   readonly element?: VignetteElement
 }
@@ -105,8 +105,8 @@ export interface EntityRow {
 /** One core slot or telemetry signal of an entity-floor object: World's word for it and its unit code ('' for words). */
 export interface SlotDeclaration { readonly key: string; readonly label: string; readonly unit: string }
 
-/** A binding the caller reads, with its observable's declared quantity, unit and states (a state marked `active` reads as on), so a drawing writes the reading as the card does. */
-export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'quantity' | 'unit' | 'states'>
+/** A binding the caller reads, with its observable's declared quantity, unit, states (a state marked `active` reads as on) and decades, so a drawing writes the reading as the card does. */
+export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'quantity' | 'unit' | 'states' | 'decades'>
 export interface TopologyNodeView extends Pick<TopologyNode, 'id' | 'label' | 'shortLabel' | 'element'> {
   /** A stop's label names its far ends (at most 24 characters). */
   readonly class: TopologyNode['class'] | 'stop'
