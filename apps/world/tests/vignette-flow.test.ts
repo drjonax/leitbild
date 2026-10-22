@@ -172,14 +172,15 @@ describe('flow symbols', () => {
     expect(drawing.segments.some(segment => segment.kind === 'endpoint')).toBe(true)
   })
 
-  test('a lone item writes its state in its observable\'s declared words and, on a line of its own, the command it does not follow; unknown reads "?"', () => {
+  test('a lone item writes its state in its observable\'s declared words, or in their place the command it does not follow; unknown reads "?"', () => {
     const lone: Topology = {
       ...section,
       layout: { ...section.layout, nodes: section.layout.nodes.map(node => (node.id === 'mover' ? { id: 'mover', x: 5, y: 2, width: 2, height: 2, ports: node.ports, text: { x: 7, y: 2, width: 4, height: 2, lines: 3, side: 'right' as const } } : node)) },
       nodes: section.nodes.map(node => (node.id === 'mover' ? { ...node, bindings: [{ role: 'running' as const, ref: 'unit:x#runA', quantity: 'state' as const, unit: '', states: [{ value: 'on', label: 'RUN', active: true as const }, { value: 'off', label: 'STOP' }] }] } : node)),
     }
     const words = (observations: ReadonlyArray<Observation>) => flowDrawing(lone, observations, [], false).texts.find(text => text.id === 'mover')!.lines.map(line => `${line.kind}:${line.text}`)
-    expect(words([{ ...observation('unit:x#runA', 'off'), why: 'commanded RUN' }])).toEqual(['name:Mover A', 'word:STOP', 'command:commanded RUN'])
+    expect(words([{ ...observation('unit:x#runA', 'off'), why: 'CMD RUN' }])).toEqual(['name:Mover A', 'command:CMD RUN'])
+    expect(words([observation('unit:x#runA', 'off')])).toEqual(['name:Mover A', 'word:STOP'])
     expect(words([observation('unit:x#runA', 'on')])).toEqual(['name:Mover A', 'word:RUN'])
     expect(words([observation('unit:x#runA', 'on', 'bad')])).toEqual(['name:Mover A', 'word:?'])
   })

@@ -173,8 +173,8 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     const element = view.element ?? view.id
     const name = members.length > 1 ? groupName(members.map(member => member.shortLabel ?? member.label)) : view.shortLabel ?? view.label
     // A group says how many of its members run (or conduct); a lone item its state word in the words its observable
-    // declares, the command it does not follow (the observation's why), and its readings: the lines the layout kept
-    // room for, in their order, an empty one left out.
+    // declares, or the command it does not follow (the observation's why), and its readings: the lines the layout
+    // kept room for, in their order, an empty one left out.
     const counted = members.length > 1 ? members.map(stateOf) : []
     const role = members[0]!.bindings.some(binding => binding.role === 'running') ? 'RUN' : 'ON'
     const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, usable(binding) ?? undefined))
@@ -184,10 +184,10 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
       ? [{ text: name, kind: 'name' }, { text: counted.some(state => state.kind === 'unknown') ? `${role} ?/${members.length}` : `${role} ${counted.filter(state => state.kind === 'on').length}/${members.length}`, kind: 'word' }]
       : [
         { text: name, kind: 'name' },
-        ...(written.state === null ? [] : [
-          { text: stateBinding?.states === undefined ? '' : readingOf(stateBinding, 'enum').text, kind: 'word' as const },
-          { text: stateBinding === undefined ? '' : usable(stateBinding)?.why ?? '', kind: 'command' as const },
-        ]),
+        // The command it does not follow stands in its state word's place, as today's CMD word does; the glyph shows its state.
+        ...(written.state === null ? [] : [stateBinding === undefined ? { text: '', kind: 'word' as const }
+          : usable(stateBinding)?.why !== undefined ? { text: usable(stateBinding)!.why!, kind: 'command' as const }
+            : { text: stateBinding.states === undefined ? '' : readingOf(stateBinding, 'enum').text, kind: 'word' as const }]),
         ...written.readings.map(ref => {
           const look = readingOf(view.bindings.find(entry => entry.ref === ref)!, 'number')
           return { text: look.unit === '' ? look.text : `${look.text} ${look.unit}`, kind: 'reading' as const }
