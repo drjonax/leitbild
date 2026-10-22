@@ -123,8 +123,8 @@
   ].slice(0, 4))
   const pageTitle = $derived(workspacePageTitle({
     workspace: workspace ? workspaceTitle : null,
-    run: selectedWorldResource?.title,
-    room: selectedAgentsResource?.title,
+    run: selectedWorldResource?.title ?? null,
+    room: selectedAgentsResource?.title ?? null,
   }))
 
   /** The Modules' answers to the last Resource read, so Back and Forward can check a restored selection too. */

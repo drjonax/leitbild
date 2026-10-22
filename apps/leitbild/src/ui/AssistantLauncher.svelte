@@ -4,7 +4,7 @@
 
   interface Props {
     readonly disabled?: boolean
-    readonly submit?: (prompt: string) => Promise<void>
+    readonly submit?: ((prompt: string) => Promise<void>) | undefined
     readonly toggle?: () => Promise<void>
     readonly active?: boolean
     readonly onError?: (message: string) => void

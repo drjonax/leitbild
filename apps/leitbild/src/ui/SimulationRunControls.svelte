@@ -93,8 +93,10 @@
   // The Run's clock is read every second: a failed read is reported while it fails and taken back once a read succeeds.
   const readFailure = createRecoverableError({ report: message => reportError(message), retract: message => retractError(message) })
 
-  const capabilityAvailableFor = (candidate: ModuleResourceDescriptor, id: string): boolean =>
-    candidate.capabilityIds.includes(id) && capabilities.some(capability => capability.id === id)
+  const capabilityAvailableFor = (candidate: ModuleResourceDescriptor, id: string): boolean => {
+    const capability = capabilities.find(entry => entry.id === id)
+    return capability !== undefined && candidate.capabilityIds.includes(capability.id)
+  }
   const capabilityAvailable = (id: string): boolean => capabilityAvailableFor(resource, id)
   const invoke = async <T>(target: ModuleResourceDescriptor['ref'], capabilityId: string, input: unknown): Promise<InvocationResponse<T>> =>
     await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/capabilities/${encodeURIComponent(capabilityId)}/invoke`,

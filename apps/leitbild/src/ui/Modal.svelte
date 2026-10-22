@@ -29,10 +29,10 @@
     /** Between the titles and ×, e.g. the guide's Contents button. */
     headerExtra?: Snippet
     children: Snippet
-    footer?: Snippet
-    onclose?: (reason: ModalCloseReason) => void
+    footer?: Snippet | undefined
+    onclose?: ((reason: ModalCloseReason) => void) | undefined
     /** Focus target when the opener is gone or there was none: the matching hero CTA. */
-    fallbackFocus?: () => HTMLElement | null
+    fallbackFocus?: (() => HTMLElement | null) | undefined
     closeLabel?: string
   }
 

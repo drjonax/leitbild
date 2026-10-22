@@ -52,7 +52,7 @@
   const shown = $derived(query.trim() ? filterRows(rows, query) : rows)
   const allState = $derived(selectAllState(shown, selected))
   const chosen = $derived(rows.filter(row => selected.has(row.id)))
-  const byWorkspace = $derived(activity?.byWorkspace ?? new Map())
+  const byWorkspace = $derived<ShownActivity['byWorkspace']>(activity?.byWorkspace ?? new Map())
   const head = $derived(activityHead(rows, activity))
   const activeIds = $derived(head.activeIds)
 
