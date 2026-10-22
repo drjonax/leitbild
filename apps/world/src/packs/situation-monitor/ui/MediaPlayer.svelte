@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ExternalRecord } from '../model.ts'
-  const { media, observedAt, title }: { media: ExternalRecord['media'][number]; observedAt?: string; title: string } = $props()
+  const { media, observedAt, title }: { media: ExternalRecord['media'][number]; observedAt?: string | undefined; title: string } = $props()
   let requested = $state(false)
   let video = $state<HTMLVideoElement | null>(null)
   let error = $state('')

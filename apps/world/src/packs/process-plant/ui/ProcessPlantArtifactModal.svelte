@@ -124,7 +124,7 @@
     const viewBox = /\sviewBox="([^"]+)"/.exec(svg)?.[1]?.trim()
     if (!viewBox) return null
     const [, , width, height] = viewBox.split(/\s+/).map(Number)
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+    if (width === undefined || height === undefined || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
     return { width, height }
   }
 
@@ -552,11 +552,11 @@
           </button>
         </header>
         {#if componentSourceFile}
-          <pre><code>{#each sourceLinesFor(componentSourceFile.content) as line, lineIndex (`component-${componentSource.id}-${lineIndex}`)}<span data-component-source-line={lineIndex}>{#each sourceNavigationSegments(line, componentSource.sourceLinks) as segment, segmentIndex (`${lineIndex}-${segmentIndex}-${segment.text}`)}{#if segment.link}<button
+          <pre><code>{#each sourceLinesFor(componentSourceFile.content) as line, lineIndex (`component-${componentSource.id}-${lineIndex}`)}<span data-component-source-line={lineIndex}>{#each sourceNavigationSegments(line, componentSource.sourceLinks) as segment, segmentIndex (`${lineIndex}-${segmentIndex}-${segment.text}`)}{#if segment.link}{@const link = segment.link}<button
                     type="button"
                     class="source-link"
-                    title="Open {segment.link.targetPath} at {segment.link.importedName}"
-                    onclick={() => void openImportedSource(segment.link)}
+                    title="Open {link.targetPath} at {link.importedName}"
+                    onclick={() => void openImportedSource(link)}
                   >{segment.text}</button>{:else}{segment.text}{/if}{/each}</span>{lineIndex + 1 < sourceLinesFor(componentSourceFile.content).length ? '\n' : ''}{/each}</code></pre>
         {:else}
           <div class="process-display-error">Implementation source was not included in the artifact payload.</div>

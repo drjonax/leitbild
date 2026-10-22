@@ -69,7 +69,7 @@
       {#if draft.adapter !== 'met-forecast'}<label>Public HTTPS URL<input type="url" bind:value={draft.url} /></label>{/if}
       {#if draft.adapter === 'met-forecast'}
         <div class="row"><label>Longitude<input type="number" min="-180" max="180" step="any" bind:value={draft.point[0]} /></label><label>Latitude<input type="number" min="-90" max="90" step="any" bind:value={draft.point[1]} /></label></div>
-        <button onclick={() => { draft!.point = [...(mapView?.center ?? center)] }}>Use map centre</button>
+        <button onclick={() => { if (draft?.adapter === 'met-forecast') draft.point = [...(mapView?.center ?? center)] }}>Use map centre</button>
       {/if}
       {#if draft.adapter === 'geojson' && draft.mapping}<details><summary>Property pointers</summary>{#each mappingFields as field}<label>{field}<input bind:value={draft.mapping[field]} /></label>{/each}<small>JSON Pointers, e.g. /properties/title or /properties/links/0/url. Literal dots work; escape / as ~1 and ~ as ~0. Every feature needs a stable ID.</small></details>{/if}
       {#if draft.adapter === 'vegvesen'}
