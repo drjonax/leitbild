@@ -90,13 +90,13 @@
     {/each}
     {#each drawing.devices as device (device.id)}
       <div class="placed device" role="button" tabindex="0" aria-label={device.title} title={device.title} style:left={`${device.x - SYMBOL_PX / 2}px`} style:top={`${device.y - SYMBOL_PX / 2}px`} onclick={event => press(device.id, event.currentTarget)} onkeydown={key(device.id)}>
-        <obc-automation-button variant="regular" positioning="point" showReadoutStack={false} state={device.on ? 'open' : 'closed'} static={device.unknown} orientation={device.orientation} activated={popover.kind === 'open' && popover.item === device.id} progress={false} hasBadgeSpacer={false} alert={device.tone !== null} alertFrameStatus={device.tone === null ? 'caution' : ALERT_TYPE[device.tone]} alertFrameMode="acked-active" alertFrameThickness="small" alertFrameType="regular" showAlertCategoryIcon={false} showAlertIcon={false}>
+        <div class="point"><obc-automation-button variant="regular" positioning="point" showReadoutStack={false} state={device.on ? 'open' : 'closed'} static={device.unknown} orientation={device.orientation} activated={popover.kind === 'open' && popover.item === device.id} progress={false} hasBadgeSpacer={false} alert={device.tone !== null} alertFrameStatus={device.tone === null ? 'caution' : ALERT_TYPE[device.tone]} alertFrameMode="acked-active" alertFrameThickness="small" alertFrameType="regular" showAlertCategoryIcon={false} showAlertIcon={false}>
           {#if device.glyph?.tag === 'obc-valve-analog-two-way-icon'}
             <obc-valve-analog-two-way-icon slot="icon" value={device.glyph.value} closed={device.glyph.value === 0} vertical={device.vertical}></obc-valve-analog-two-way-icon>
           {:else if device.glyph !== null}
             <svelte:element this={device.glyph.tag} slot="icon" usecsscolor></svelte:element>
           {/if}
-        </obc-automation-button>
+        </obc-automation-button></div>
       </div>
     {/each}
     {#each drawing.texts as text (text.id)}
@@ -117,7 +117,9 @@
   canvas { position: absolute; left: 0; top: 0; }
   .placed { position: absolute; }
   /* A device's button is its symbol's two cells, so a press, a pointer and the focus ring find it; the symbol stands at its centre. */
-  .device { width: calc(2 * var(--row)); height: calc(2 * var(--row)); display: grid; place-items: center; }
+  .device { width: calc(2 * var(--row)); height: calc(2 * var(--row)); }
+  /* OpenBridge's point positioning centres the symbol on its host's origin: the host stands at the box's centre. */
+  .point { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
   .box { display: block; }
   [role='button']:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
   /* A line may run a few pixels past the width the sizing reserved (8 px a character; capitals are wider): the layout keeps text clear of other items by more. */

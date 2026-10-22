@@ -40,8 +40,11 @@
       <p class="empty">No recorded values in this window yet</p>
     {:else}
       <svg {width} {height} role="img" aria-label={pens.map(pen => pen.label).join(', ')}>
-        {#each drawing.values as tick (tick.label)}<line class="grid" x1="0" x2={width} y1={tick.y} y2={tick.y} /><text class="tick" x="2" y={tick.y - 2}>{tick.label}</text>{/each}
-        {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y}><title>{limit.label}</title></line>{#if limit.labelY !== null}<text class="tick" x={width - 2} y={limit.labelY} text-anchor="end">{limit.label}</text>{/if}{/each}
+        {#each drawing.values as tick (tick.label)}<line class="grid" x1="0" x2={width} y1={tick.y} y2={tick.y} />{/each}
+        {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y}><title>{limit.label}</title></line>{/each}
+        <!-- Names over the lines, each on its halo. -->
+        {#each drawing.values as tick (tick.label)}<text class="tick" x="2" y={tick.y - 2}>{tick.label}</text>{/each}
+        {#each drawing.limits as limit (limit.id)}{#if limit.labelY !== null}<text class="tick" x={width - 2} y={limit.labelY} text-anchor="end">{limit.label}</text>{/if}{/each}
         {#each drawing.beyond as limit (limit.id)}<text class="tick" x={width - 2} y={limit.edge === 'top' ? BEYOND_TOP_Y : height - BEYOND_BOTTOM_INSET} text-anchor="end">{limit.edge === 'top' ? '▲' : '▼'} {limit.label}</text>{/each}
         {#each drawing.pens as pen (pen.ref)}<path class={`pen ${pen.tone ?? ''}`} d={pen.path} stroke-dasharray={pen.dash === '' ? undefined : pen.dash} />{/each}
       </svg>
@@ -68,7 +71,8 @@
   svg { display: block; overflow: visible; }
   .empty { margin: 0; padding: 4px 6px; color: var(--element-neutral-color); }
   .grid { stroke: var(--border-divider-color); stroke-width: 1; }
-  .tick { fill: var(--element-neutral-color); font-size: 12px; }
+  /* A halo in the strip's own background keeps a name legible where limit lines and traces run through it. */
+  .tick { fill: var(--element-neutral-color); font-size: 12px; paint-order: stroke; stroke: var(--container-section-color); stroke-width: 3px; stroke-linejoin: round; }
   .limit { stroke: var(--element-neutral-color); stroke-width: 1; stroke-dasharray: 4 3; }
   .limit.caution { stroke: var(--alert-caution-color); }
   .limit.warning { stroke: var(--alert-warning-color); }

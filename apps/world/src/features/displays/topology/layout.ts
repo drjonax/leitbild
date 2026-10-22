@@ -27,7 +27,7 @@ export const MAX_READINGS = 2
 type Bound = Pick<TopologyNode['bindings'][number], 'role' | 'ref'>
 /**
  * What a flow item writes under its name: the word of its state (its running or conducting binding, in the words
- * its observable declares) with, on a line of its own, the command it does not follow; then its readings.
+ * its observable declares), or in its place the command it does not follow; then its readings.
  */
 export const itemText = (bindings: ReadonlyArray<Bound>): { readonly state: string | null; readonly readings: ReadonlyArray<string> } => {
   const state = bindings.find(binding => binding.role === 'running' || binding.role === 'conducting')?.ref ?? null
