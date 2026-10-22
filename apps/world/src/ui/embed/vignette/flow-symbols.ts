@@ -17,7 +17,7 @@ import type { Segment } from '@oicl/connector-diagram'
 import type { Observation } from '../../../core/observation/model.ts'
 import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
 import type { TopologyBinding, VignetteSection } from '../../../features/displays/compose/model.ts'
-import { groupName, itemText } from '../../../features/displays/topology/layout.ts'
+import { groupName, itemText, readingWord } from '../../../features/displays/topology/layout.ts'
 import { VIGNETTE_ROW_PX } from './grid.ts'
 import { chevronSegment, pipeSegments, pipeValue, stubEndSegment, type PipeLook } from './pipe-segments.ts'
 import { stub } from './network.ts'
@@ -59,9 +59,6 @@ export const symbolOf = (node: Pick<NodeView, 'class' | 'bindings'>, lines: Read
     case 'boundary': case 'stop': return 'end'
   }
 }
-
-/** The word a level reading is written with on a drawing (ISA's abbreviation). */
-export const LEVEL_WORD = 'LVL'
 
 /** A device's state: on, off, a position of travel (0 shut, 1 open), or not known. */
 export type DeviceState = { readonly kind: 'on' | 'off' | 'unknown' } | { readonly kind: 'position'; readonly fraction: number }
@@ -213,8 +210,9 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
         ...written.readings.map(ref => {
           const look = readingOf(view.bindings.find(entry => entry.ref === ref)!, 'number')
           const value = look.unit === '' ? look.text : `${look.text} ${look.unit}`
-          // A level says it is one: its percent would read as a power or an opening (a core's "100.0 %" after a trip).
-          return { text: view.bindings.some(entry => entry.ref === ref && entry.role === 'level') ? `${LEVEL_WORD} ${value}` : value, kind: 'reading' as const }
+          // A level says it is one (layout.ts readingWord), in the room the sizing reserved for the word beside the value.
+          const word = readingWord(view.bindings, ref)
+          return { text: word === null ? value : `${word} ${value}`, kind: 'reading' as const }
         }),
       ]
     const lines = sized.filter(line => line.text !== '')

@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Observation } from '../src/core/observation/model.ts'
+import { decimalsFor, unitSymbol, type Observable, type Observation } from '../src/core/observation/model.ts'
 import type { TopologyGraph } from '../src/core/observation/topology.ts'
 import type { VignetteSection } from '../src/features/displays/compose/model.ts'
 import { FLOW_ROOM, overviewOf, topologySection } from '../src/features/displays/compose/topology.ts'
-import { flowLayout } from '../src/features/displays/topology/flow-sizing.ts'
+import { FLOW_TEXT_LINE, flowLayout, READING_CHARACTERS } from '../src/features/displays/topology/flow-sizing.ts'
 import { groupName, type TopologyLayout } from '../src/features/displays/topology/layout.ts'
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
 import { derivedObservables, insertedShare, readDerived } from '../src/packs/process-plant/observation/derived.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
@@ -244,6 +245,50 @@ describe('flow symbols', () => {
     const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)
     expect(frozen.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'closed-dash')).toBe(true)
+  })
+})
+
+describe('text room (UX audit #68; plan §5.5, containment)', () => {
+  // Every line a drawn item writes stays inside the box its layout kept for it, at the sizing's width a character:
+  // its name, its state word, and each reading at the longest value the sizing reserves a reading for, a level's
+  // with its word before it ("LVL 100.0 %" ran one character past its box). Generic: every item of the declared
+  // overview at two to four loops and of the neighbourhoods an element's default draws.
+  type Declared = Pick<Observable, 'quantity' | 'unit' | 'states'>
+  /** A value whose reading takes all of the characters the sizing reserves for a value (READING_CHARACTERS). */
+  const widest = (declared: Declared): number => {
+    const symbol = unitSymbol(declared.unit)
+    const decimals = decimalsFor(declared.unit, 10 ** 6, declared.quantity)
+    const digits = READING_CHARACTERS - (symbol === '' ? 0 : symbol.length + 1) - (decimals === 0 ? 0 : decimals + 1)
+    return Number(`${'9'.repeat(Math.max(1, digits))}${decimals === 0 ? '' : `.${'9'.repeat(decimals)}`}`)
+  }
+  /** A state at its longest declared word. */
+  const longestState = (declared: Declared): string | null =>
+    declared.states === undefined || declared.states.length === 0 ? null : [...declared.states].sort((left, right) => right.label.length - left.label.length)[0]!.value
+  const outside = (objectId: string, request: TopologyRequest | 'overview', loops: number): ReadonlyArray<string> => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: objectId, loopCount: loops }))
+    const served = servedPlantTopology(objectId as never, plant)
+    const declared = new Map(plantDeclaration(objectId as never, plant, null).observables.map(observable => [observable.ref, observable]))
+    const scoped = request === 'overview' ? overviewOf(served)! : (() => { const result = scopeTopology(served, request); if (!result.ok) throw new Error(result.refusal.code); return result.scoped })()
+    const section = topologySection(objectId, 'process-plant', scoped, flowLayout(scoped, ROOM)!, 37, ref => declared.get(ref)) as Topology
+    const observations = section.nodes.flatMap(node => node.bindings.flatMap(binding => {
+      const state = longestState(binding)
+      return [observation(binding.ref, state ?? widest(binding))]
+    }))
+    const drawing = flowDrawing(section, observations, [], false)
+    return drawing.texts.flatMap(text => [
+      ...(text.x < 0 || text.x + text.width > drawing.width ? [`${text.id}: its box leaves the drawing`] : []),
+      ...text.lines.filter(line => line.text.length * FLOW_TEXT_LINE.perCharacter > text.width)
+        .map(line => `${text.id}: "${line.text}" needs ${line.text.length * FLOW_TEXT_LINE.perCharacter} px of its ${text.width}`),
+    ])
+  }
+
+  test('every line an item writes fits its box: names, state words, and readings with their word, at their longest', () => {
+    for (const loops of [2, 3, 4]) expect(outside(`plant:room-${loops}`, 'overview', loops)).toEqual([])
+    const around: ReadonlyArray<readonly [string, number]> = [['sgA', 1], ['pressurizer', 1], ['condenser', 2], ['turbine', 3], ['safetyBusA', 2], ['feedwaterTank', 3], ['rcpA', 2]]
+    for (const [element, reach] of around) {
+      const request = { around: [element], reach }
+      expect(outside('plant:room', request, 4)).toEqual([])
+    }
   })
 })
 

@@ -34,6 +34,15 @@ export const itemText = (bindings: ReadonlyArray<Bound>): { readonly state: stri
   return { state, readings: [...new Set(READING_ROLES.flatMap(role => bindings.filter(binding => binding.role === role && binding.ref !== state).map(binding => binding.ref)))].slice(0, MAX_READINGS) }
 }
 
+/** The word a level reading is written with on a drawing (ISA's abbreviation). */
+const LEVEL_WORD = 'LVL'
+/**
+ * The word a flow item writes before a reading, or null: a level says it is one, since its percent alone would read
+ * as a power or an opening (a core's "100.0 %" after a trip). The sizing reserves its room beside the value's.
+ */
+export const readingWord = (bindings: ReadonlyArray<Bound>, ref: string): string | null =>
+  bindings.some(binding => binding.ref === ref && binding.role === 'level') ? LEVEL_WORD : null
+
 /** "MFW A/B" for MFW A and MFW B: the words their names share in front, then what tells each apart; names sharing no leading word are joined whole. */
 export const groupName = (names: ReadonlyArray<string>): string => {
   const split = names.map(name => name.split(' '))
