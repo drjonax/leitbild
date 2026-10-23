@@ -26,6 +26,11 @@ export interface AlertRow {
   readonly state: AlertRowState
   /** null where the record names no clock: "time unknown". */
   readonly raised: { readonly at: IsoTimestamp; readonly clock: 'simulation' | 'wall' } | null
+  /**
+   * Where the alert is expected after a first-out and still inside its declared window (W2.3): the first-out's label.
+   * A drawn item whose every active alert is expected takes a neutral dashed outline, not a frame.
+   */
+  readonly expected?: { readonly after: string }
 }
 
 export type AlertObject = Pick<OperationalObject, 'id' | 'packId' | 'lifecycle' | 'alerts'>

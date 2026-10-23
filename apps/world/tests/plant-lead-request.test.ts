@@ -15,6 +15,8 @@ import { composeDefault } from '../src/features/displays/compose/compose.ts'
 import { leadRefs } from '../src/features/displays/compose/defaults.ts'
 import type { VignetteState, VignetteView } from '../src/features/displays/compose/model.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
+import { OBSERVATION_READ_REFS } from '../src/core/observation/capabilities.ts'
+import { requestPort, type ObservationPort } from '../src/features/displays/observation/port.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
 import { viewWithLeads } from '../src/ui/embed/vignette/vignette-client.ts'
@@ -121,4 +123,27 @@ describe('a display opened at power and left open through a trip (W0.5)', () => 
     const value = (signal: string) => last.observations.find(observation => observation.ref === `${plantId}#${signal}`)?.value
     expect([value('core.rodsOnBottom'), value('reactorTripBreakerA.closedState'), value('reactorTripBreakerB.closedState')]).toEqual([true, false, false])
   }, 240_000)
+
+  // R1 perf: each Pack query pays a fixed cost, so a sample asks the Plant once for values: its views' refs, its
+  // drawing's bindings and its lead request's (the unit's lead; an element's values and its stop's commands) in one read.
+  test('each sample reads the Plant once: its views\' values and its lead request\'s in one call', async () => {
+    const run = await runNow()
+    for (const subject of [plantId, `${plantId}#core`, `${plantId}#turbine`]) {
+      const outcome = await composeDefault(run, subject)
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+      const reads: Array<{ readonly objects: ReadonlyArray<string>; readonly refs: number; readonly leads: number }> = []
+      const plain = runtime.observations(person)
+      const counted: ObservationPort = { ...plain, read: async request => {
+        reads.push({ objects: [...new Set([...(request.refs ?? []).map(ref => ref.slice(0, ref.indexOf('#'))), ...(request.leads ?? []).map(lead => lead.objectId)])], refs: request.refs?.length ?? 0, leads: request.leads?.length ?? 0 })
+        return plain.read(request)
+      } }
+      const sample = await sampleVignette({ ...await runNow(), port: requestPort(counted) }, outcome.state)
+      expect(reads, subject).toHaveLength(1)
+      expect(reads[0]!.objects).toEqual([plantId])
+      expect(reads[0]!.refs).toBeLessThanOrEqual(OBSERVATION_READ_REFS)
+      expect(reads[0]!.leads).toBe(subject === plantId ? 1 : 0)
+      // And it shows what a sample read through the Run's own request port shows.
+      expect(sample).toEqual(await sampleVignette(await runNow(), outcome.state))
+    }
+  }, 120_000)
 })

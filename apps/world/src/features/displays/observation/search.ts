@@ -255,8 +255,7 @@ const suggestionsFor = (entries: ReadonlyArray<Entry>, text: string) => {
 export const resolveName = async (run: SearchRun, text: string, within?: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
   const object = run.objects.find(candidate => key(candidate.id) === key(text) && !run.denied.has(candidate.id) && (within === undefined || within.includes(candidate.id)))
   if (object) {
-    const read = await run.port.read({ lead: { objectId: object.id, count: 16 } })
-    return [...read.observations].sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity)).map(observation => observation.ref)
+    return (await run.port.read({ leads: [{ objectId: object.id, count: 16 }] })).leads[0]!
   }
   const objectId = text.includes('#') ? refObjectId(text) : undefined
   const reachable = objectId !== undefined && run.objects.some(candidate => candidate.id === objectId) && !run.denied.has(objectId) && (within === undefined || within.includes(objectId))

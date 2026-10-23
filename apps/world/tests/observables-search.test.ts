@@ -164,7 +164,7 @@ describe('ranking against a grid and a plant', () => {
   }
   const port: ObservationPort = {
     declarations: async objectIds => objectIds.map(objectId => declarations[objectId] ?? { objectId, refused: { code: 'not_observed', message: 'none' } }),
-    read: async () => ({ observations: [], unknown: [], refused: [] }),
+    read: async () => ({ observations: [], unknown: [], refused: [], leads: [] }),
     topology: async objectId => ({ objectId, refused: { code: 'not_observed', message: 'none' } }),
   }
   const searchRun = { objects: [object('plant:unit-4', 'Halden Unit 4', 'plant'), object('grid:test', 'Grid', 'grid')], denied: new Set<string>(), packs: [pack('plant'), pack('grid')], port }

@@ -11,7 +11,8 @@ import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.t
 import type { WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
 import { composeVignette } from '../src/features/displays/compose/compose.ts'
 import { vignetteStateSchema, type VignetteState } from '../src/features/displays/compose/model.ts'
-import { compileVignette, readsOf, refsRead, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
+import { planLead } from '../src/features/displays/compose/defaults.ts'
+import { compileVignette, readNow, readsOf, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import type { ObservationPort } from '../src/features/displays/observation/port.ts'
 import { recordedHoldMs } from '../src/features/historian/policy.ts'
 import { fixtureComposeRun, person } from './fixtures/compose-runs.ts'
@@ -32,8 +33,8 @@ const recording = (port: ObservationPort) => {
   const wrapped: ObservationPort = {
     declarations: async (objectIds, elementIds) => { objectIds.forEach(id => asked.objects.add(id)); return port.declarations(objectIds, elementIds) },
     read: async request => {
-      if ('refs' in request) request.refs.forEach(ref => { asked.refs.add(ref); asked.objects.add(refObjectId(ref)) })
-      else asked.objects.add(request.lead.objectId)
+      request.refs?.forEach(ref => { asked.refs.add(ref); asked.objects.add(refObjectId(ref)) })
+      request.leads?.forEach(lead => asked.objects.add(lead.objectId))
       return port.read(request)
     },
     topology: async objectId => { asked.objects.add(objectId); return port.topology(objectId) },
@@ -55,7 +56,9 @@ describe('T06: the view and the sample read only what the state names', () => {
     const watched = { ...run, port: wrapped }
     const view = await compileVignette(watched, state)
     const sample = await sampleVignette(watched, state, { fromMs: 0 })
-    const allowedRefs = new Set(await refsRead(run, state))
+    // What its views show, and what its lead requests read to lead (an element's values and its stop's commands).
+    const planned = await Promise.all(state.views.flatMap(entry => entry.kind === 'values' && entry.lead !== undefined ? [planLead(run, entry.lead, entry.rows)] : []))
+    const allowedRefs = new Set([...(await readNow(run, state)).refs, ...planned.flatMap(plan => plan.refs)])
     const allowedObjects = new Set([...readsOf(state).objectIds, ...[...allowedRefs].map(refObjectId)])
     expect([...asked.refs].filter(ref => !allowedRefs.has(ref))).toEqual([])
     expect([...asked.objects].filter(id => !allowedObjects.has(id))).toEqual([])

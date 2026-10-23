@@ -70,8 +70,8 @@ export const assembleRunContext = async (run: {
     const worst = worstOf({ ...object, alerts: alarms })
     const advised = worstOf({ ...object, alerts: advisories })
     const firstOut = [...object.alerts].filter(alert => alert.firstOut !== undefined).sort((left, right) => left.firstOut!.rank - right.firstOut!.rank)[0]
-    const lead = await run.port.read({ lead: { objectId: object.id, count: 6 } })
-    const refs = [...lead.observations].sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity)).map(observation => observation.ref)
+    const lead = await run.port.read({ leads: [{ objectId: object.id, count: 6 }] })
+    const refs = lead.leads[0]!
     const counts = [...(unacknowledged > 0 ? [`${unacknowledged} unacknowledged`] : []), ...(standing > 0 ? [`${standing} standing`] : []), `worst ${worst === undefined ? '' : worstWord(worst)}`]
     return fitted([
       `- ${object.id} · ${object.label} · ${statusOf(object)}`,

@@ -118,7 +118,7 @@ describe('Run context', () => {
     const advisories = weatherAdvisories(probe, { ...state, atmosphere: { ...state.atmosphere, visibilityM: 500 } }, at)
     expect(advisories.map(alert => [alert.advisory, alert.acknowledged, alert.priority])).toEqual([[true, false, 'warning'], [true, false, 'caution']])
     const calm = { ...probe, id: 'weather-probe:calm' as never, label: 'Calm probe' }
-    const port = { declarations: async () => [], read: async () => ({ observations: [], unknown: [], refused: [] }), topology: async () => { throw new Error('unused') } }
+    const port = { declarations: async () => [], read: async () => ({ observations: [], unknown: [], refused: [], leads: [[]] }), topology: async () => { throw new Error('unused') } }
     const { text } = await assembleRunContext({ title: 'Fog', objects: [calm, { ...probe, alerts: advisories }], denied: new Set(), clock: run.snapshot().clock, packs: [weatherPack], port: port as never })
     const assets = text.split('\n').filter(line => line.startsWith('- weather-probe:'))
     expect(assets[0]).toStartWith('- weather-probe:halden · Halden probe · ')

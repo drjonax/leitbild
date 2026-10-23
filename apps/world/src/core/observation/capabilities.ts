@@ -64,6 +64,9 @@ export const observationDeclarationSchema = z.object({
   if (new Set(elements).size !== elements.length) context.addIssue({ code: 'custom', message: 'duplicate element id' })
 })
 
+/** The most refs one read names: a whole-unit overview's values and bindings with its lead, in one call. */
+export const OBSERVATION_READ_REFS = 256
+
 const shape = <I extends z.ZodType, O extends z.ZodType>(input: I, output: O, inspect: (input: z.output<I>) => ReadonlyArray<ObjectId>) =>
   ({ input, output, inspectObjectIds: (raw: unknown) => inspect(input.parse(raw)) })
 
@@ -78,13 +81,18 @@ export const observationShapes = {
     z.object({ declarations: z.array(z.union([observationDeclarationSchema, unchangedSchema])) }).strict(),
     input => input.objectIds,
   ),
+  /**
+   * Values by ref and, in the same call, an object's lead: what it leads with now, as its Pack ranks it (mode-aware), so
+   * a sample asks each object once. `lead` answers those refs first first; each one's observation is in `observations`
+   * with the refs' own, once.
+   */
   read: shape(
-    z.union([
-      z.object({ refs: z.array(observableRefSchema).min(1).max(64) }).strict(),
-      z.object({ lead: z.object({ objectId: objectIdSchema, count: z.number().int().min(1).max(16) }).strict() }).strict(),
-    ]),
-    z.object({ observations: z.array(observationSchema), unknown: z.array(observableRefSchema) }).strict(),
-    input => 'refs' in input ? [...new Set(input.refs.map(refObjectId))] : [input.lead.objectId],
+    z.object({
+      refs: z.array(observableRefSchema).max(OBSERVATION_READ_REFS),
+      lead: z.object({ objectId: objectIdSchema, count: z.number().int().min(1).max(16) }).strict().optional(),
+    }).strict().refine(input => input.refs.length > 0 || input.lead !== undefined, { message: 'read refs, a lead or both', path: ['refs'] }),
+    z.object({ observations: z.array(observationSchema), unknown: z.array(observableRefSchema), lead: z.array(observableRefSchema).max(16).optional() }).strict(),
+    input => [...new Set([...input.refs.map(refObjectId), ...input.lead === undefined ? [] : [input.lead.objectId]])],
   ),
   topology: shape(
     z.object({ objectId: objectIdSchema, known: revisionSchema.optional() }).strict(),

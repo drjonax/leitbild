@@ -79,7 +79,8 @@ describe('the observation port', () => {
     const read = await port.read({ refs: ['unit:one#speed', 'unit:one#odometer', 'unit:two#status'] })
     expect(read.observations.map(observation => [observation.ref, observation.clock])).toEqual([['unit:one#speed', 'simulation'], ['unit:two#status', 'simulation']])
     expect([read.unknown, read.refused]).toEqual([['unit:one#odometer'], []])
-    expect((await port.read({ lead: { objectId: unitOne, count: 1 } })).observations.map(observation => observation.ref)).toEqual(['unit:one#speed'])
+    const lead = await port.read({ leads: [{ objectId: unitOne, count: 1 }] })
+    expect([lead.observations.map(observation => observation.ref), lead.leads]).toEqual([['unit:one#speed'], [['unit:one#speed']]])
 
     const graph = await port.topology(unitOne)
     expect(graph).toMatchObject({ objectId: 'unit:one', family: 'flow' })
@@ -101,7 +102,8 @@ describe('T06: the port reads only what its caller may', () => {
     expect([read.observations.map(observation => observation.ref), read.refused.map(entry => [entry.objectId, entry.refused.code])])
       .toEqual([['unit:two#speed'], [['unit:one', 'agent_access_restricted']]])
     expect(codeOf(await port.topology(unitOne))).toBe('agent_access_restricted')
-    expect(codeOf((await port.read({ lead: { objectId: unitOne, count: 2 } })).refused[0])).toBe('agent_access_restricted')
+    const lead = await port.read({ refs: ['unit:two#speed'], leads: [{ objectId: unitOne, count: 2 }] })
+    expect([codeOf(lead.refused[0]), lead.leads, lead.observations.map(observation => observation.ref)]).toEqual(['agent_access_restricted', [[]], ['unit:two#speed']])
     expect((await run.observations(person).declarations([unitOne]))[0]).toMatchObject({ objectId: 'unit:one' })
   })
 

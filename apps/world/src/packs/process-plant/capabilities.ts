@@ -384,7 +384,7 @@ export const processPlantCapabilities = [
   defineObservationCapability('read', {
     id: processPlantObservationCapabilityIds.read,
     title: 'Read observations',
-    description: 'World\'s observation layer reads Plant values with their quality and priority, or the values a unit leads with in its mode.',
+    description: 'World\'s observation layer reads Plant values with their quality and priority, and in the same call the values a unit leads with in its mode.',
   }),
   defineObservationCapability('topology', {
     id: processPlantObservationCapabilityIds.topology,

@@ -74,15 +74,17 @@ describe('weather observation declarations (N5)', () => {
     expect(advisories.length).toBeGreaterThan(0)
     expect(all.filter(observation => observation.priority !== 'none').map(observation => [observation.ref, observation.priority]))
       .toEqual([...new Set(advisories.map(alert => alert.observable!))].map(ref => [ref, advisories.some(alert => alert.observable === ref && alert.priority === 'warning') ? 'warning' : 'caution']))
-    const lead = observationShapes.read.output.parse(weatherObservationRead.answer({ lead: { objectId: probe.id, count: 3 } }, objects))
-    expect(lead.observations.map(observation => [observation.ref.split('#')[1], observation.rank])).toEqual([['visibilityM', 1], ['windSpeedMps', 2], ['precipitationType', 3]])
-    expect(() => weatherObservationRead.answer({ lead: { objectId: 'weather-probe:nowhere', count: 3 } }, objects)).toThrow(/No weather probe or area/)
+    const lead = observationShapes.read.output.parse(weatherObservationRead.answer({ refs: [`${probe.id}#windSpeedMps`], lead: { objectId: probe.id, count: 3 } }, objects))
+    expect(lead.lead!.map(ref => ref.split('#')[1])).toEqual(['visibilityM', 'windSpeedMps', 'precipitationType'])
+    // The refs' values first, then the lead's others, each once.
+    expect(lead.observations.map(observation => observation.ref.split('#')[1])).toEqual(['windSpeedMps', 'visibilityM', 'precipitationType'])
+    expect(() => weatherObservationRead.answer({ refs: [], lead: { objectId: 'weather-probe:nowhere', count: 3 } }, objects)).toThrow(/No weather probe or area/)
   })
 
   test('lead ranks are declared beside the quantities; the lead reads advised values, then by those ranks', () => {
     expect(declare(area.id).observables.filter(observable => observable.lead !== undefined).map(observable => [observable.ref.split('#')[1], observable.lead]))
       .toEqual([['airTemperatureC', 4], ['windSpeedMps', 2], ['visibilityM', 1], ['precipitationType', 3], ['snow', 6], ['ice', 5]])
-    const lead = observationShapes.read.output.parse(weatherObservationRead.answer({ lead: { objectId: area.id, count: 8 } }, objects))
-    expect(lead.observations.map(observation => observation.ref.split('#')[1])).toEqual(['visibilityM', 'windSpeedMps', 'precipitationType', 'airTemperatureC', 'ice', 'snow'])
+    const lead = observationShapes.read.output.parse(weatherObservationRead.answer({ refs: [], lead: { objectId: area.id, count: 8 } }, objects))
+    expect(lead.lead!.map(ref => ref.split('#')[1])).toEqual(['visibilityM', 'windSpeedMps', 'precipitationType', 'airTemperatureC', 'ice', 'snow'])
   })
 })

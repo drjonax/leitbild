@@ -15,7 +15,7 @@ import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, 
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
 import { TOPOLOGY_REACH } from '../topology/scope.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
-import { alertRowsFor, alertsOf, entityRows, groupValues, leadsNow, readsOf, refsRead, slotsOf, stripsOf } from './view.ts'
+import { alertRowsFor, alertsOf, entityRows, groupValues, readNow, readsOf, slotsOf, stripsOf } from './view.ts'
 
 export type ComposeOutcome =
   | { readonly ok: true; readonly state: VignetteState; readonly card: DisplayCard; readonly rows: number }
@@ -164,7 +164,8 @@ const resolveView = async (run: ComposeRun, view: View, path: string, subjects: 
  */
 const answered = async (run: ComposeRun, drafts: ReadonlyArray<DraftView>): Promise<ReadonlyArray<DraftView>> => Promise.all(drafts.map(async view => {
   if (view.kind !== 'values' || view.lead === undefined) return view
-  const refs = [...new Set([...view.refs ?? [], ...(await leadNow(run, view.lead)).refs])].slice(0, view.rows ?? LEAD_ROWS)
+  const rows = view.rows ?? LEAD_ROWS
+  const refs = [...new Set([...view.refs ?? [], ...(await leadNow(run, view.lead, rows)).refs])].slice(0, rows)
   return { kind: 'values', refs } as DraftView
 }))
 
@@ -390,13 +391,12 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
 /** The card of a fitted state: every value it reads, the alerts and table rows its rows hold; each one a section leaves out is counted and said. */
 const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted: ReadonlyArray<DisplayCardAdjustment>, dropped: number): Promise<DisplayCard> => {
   // Named values first, then the chips' and the views' own values; what a drawing binds comes after the alerts and tables.
-  const leads = await leadsNow(run, state)
-  const read = await refsRead(run, state, leads)
+  const { leads, refs: read, observations } = await readNow(run, state)
   const own = readsOf(state, leads).refs
   const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...own])].filter(ref => read.includes(ref))
   const bound = read.filter(ref => !refs.includes(ref))
-  const [declared, values] = await Promise.all([declaredRefs(run, read), read.length === 0 ? null : run.port.read({ refs: read })])
-  const valueItems = (list: ReadonlyArray<string>) => list.flatMap(ref => declared.has(ref) ? [valueItem(declared.get(ref)!, values?.observations.find(observation => observation.ref === ref))] : [])
+  const declared = await declaredRefs(run, read)
+  const valueItems = (list: ReadonlyArray<string>) => list.flatMap(ref => declared.has(ref) ? [valueItem(declared.get(ref)!, observations.find(observation => observation.ref === ref))] : [])
   const adjusted = [...fitted]
   let hidden = dropped
   const left = (count: number, total: number, what: string): void => {

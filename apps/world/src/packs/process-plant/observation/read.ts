@@ -1,5 +1,5 @@
 import type { IsoTimestamp, ObjectId, Priority } from '../../../core/model/index.ts'
-import type { Observation } from '../../../core/observation/model.ts'
+import type { Observable, Observation } from '../../../core/observation/model.ts'
 import type { PackRuntimeRecordedHistory } from '../../../simulation/protocol.ts'
 import type { VariablePath } from '../graph/index.ts'
 import { annunciating, colours, expectedAfterGroup, pendingActions, plantAlarmPriority, priorityOrder } from '../ic/alarm-philosophy.ts'
@@ -43,8 +43,25 @@ const sinceOf = (context: PlantReadContext, seriesId: string, value: unknown): O
   return at === undefined ? undefined : { at, clock: 'simulation' }
 }
 
-/** The Plant's values at these paths, ranked where given; null for a path it does not declare. */
-export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string>, ranked = false): ReadonlyArray<Observation | null> => {
+type Limit = Observable['thresholds'][number]
+const limitsByRule = new WeakMap<Observable, ReadonlyMap<string, ReadonlyArray<Limit>>>()
+
+/**
+ * A declared observable's limits by the rule that sets each (a limit's id is its rule's id, or that id and `#…`), found
+ * once per declaration: a read looks each annunciating rule up on every value it reads.
+ */
+const limitsOf = (observable: Observable): ReadonlyMap<string, ReadonlyArray<Limit>> => limitsByRule.get(observable) ?? (() => {
+  const index = new Map<string, Limit[]>()
+  for (const limit of observable.thresholds) {
+    const rules = new Set([limit.id, ...[...limit.id].flatMap((character, at) => (character === '#' ? [limit.id.slice(0, at)] : []))])
+    for (const rule of rules) index.set(rule, [...index.get(rule) ?? [], limit])
+  }
+  limitsByRule.set(observable, index)
+  return index
+})()
+
+/** The Plant's values at these paths; null for a path it does not declare. */
+export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string>): ReadonlyArray<Observation | null> => {
   const { system, recording } = context
   const plant = system.plant
   const snapshot = system.protection?.snapshot()
@@ -53,20 +70,22 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
   const pending = snapshot === undefined ? [] : pendingActions(plant, snapshot, system.runtime.elapsedMs())
   let judged: ReadonlyArray<SafetyFunctionEvaluation> | undefined
   const safetyFunctions = () => judged ??= evaluateSafetyFunctions(plant, system.runtime)
-  return paths.map((path, index) => {
+  return paths.map(path => {
     const declared = declaredObservable(context.objectId, plant, recording, path)
     if (declared === null) return null
     const binding = plant.graph.signalBindingByPath.get(path as VariablePath)
-    if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation', ...(ranked ? { rank: index + 1 } : {}) }
+    if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation' }
     // A reading the model qualifies measures nothing while its flag is off: no value, not applicable, never a colour.
     const qualified = qualifiedReadings(plant).get(path)
     if (qualified !== undefined && system.runtime.readVariableSnapshot(qualified.flag).value !== true) {
-      return { ref: declared.ref, value: null, quality: 'not-applicable', at: context.simulationTime, clock: 'simulation', priority: 'none', why: `measures nothing unless ${qualified.words}`, ...(ranked ? { rank: index + 1 } : {}) }
+      return { ref: declared.ref, value: null, quality: 'not-applicable', at: context.simulationTime, clock: 'simulation', priority: 'none', why: `measures nothing unless ${qualified.words}` }
     }
     const variable = system.runtime.readVariableSnapshot(binding.path)
-    const limitsOf = (ruleId: string) => declared.thresholds.filter(threshold => threshold.id === ruleId || threshold.id.startsWith(`${ruleId}#`))
+    // Only a rule that sets a limit on it can colour it (colours): the rest are not asked.
+    const limits = limitsOf(declared)
+    const ruled = (ruleId: string): ReadonlyArray<Limit> => limits.get(ruleId) ?? []
     const reading = typeof variable.value === 'number' ? variable.value : null
-    const on = snapshot === undefined ? [] : alarms.filter(lifecycle => colours(snapshot, lifecycle, limitsOf(lifecycle.ruleId), reading))
+    const on = snapshot === undefined || limits.size === 0 ? [] : alarms.filter(lifecycle => limits.has(lifecycle.ruleId) && colours(snapshot, lifecycle, ruled(lifecycle.ruleId), reading))
       .map(lifecycle => ({ lifecycle, priority: plantAlarmPriority(lifecycle.severity, lifecycle.annunciator?.priority), after: expectedAfterGroup(plant, lifecycle, all) }))
       .sort((left, right) => priorityOrder[right.priority] - priorityOrder[left.priority])
     const colouring = on.find(entry => entry.after === null)
@@ -75,8 +94,8 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
     // The deepest limit an annunciating rule sets on it that the value is past, coloured or expected after a first-out:
     // the chip names the trip past which it stands (LO-LO), as the drawing did, while its colour stays its alarm's.
     const named = on[0]
-    const past = named === undefined || reading === null ? undefined : limitsOf(named.lifecycle.ruleId).find(limit => (limit.direction === 'low' ? reading < limit.value : reading > limit.value))
-    const due = pending.filter(entry => limitsOf(entry.rule.id).length > 0).sort((left, right) => left.leftMs - right.leftMs)[0]
+    const past = named === undefined || reading === null ? undefined : ruled(named.lifecycle.ruleId).find(limit => (limit.direction === 'low' ? reading < limit.value : reading > limit.value))
+    const due = pending.filter(entry => limits.has(entry.rule.id)).sort((left, right) => left.leftMs - right.leftMs)[0]
     const value = typeof variable.value === 'number' && !Number.isFinite(variable.value) ? null : declared.valueType === 'enum' ? String(variable.value) : variable.value
     const since = declared.series !== null && declared.valueType !== 'number' ? sinceOf(context, declared.series.seriesId, variable.value) : undefined
     return {
@@ -86,7 +105,6 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
       at: context.simulationTime,
       clock: 'simulation',
       priority,
-      ...(ranked ? { rank: index + 1 } : {}),
       ...(expected === undefined ? {} : { expected: { after: expected.after!.label } }),
       ...(since === undefined ? {} : { since }),
       ...(past === undefined ? {} : { past: past.id }),
@@ -96,7 +114,7 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
   })
 }
 
-/** The values the unit leads with in the mode it is in (ic/key-values.ts), ranked: its overview's first, then the rest it watches. */
+/** The values the unit leads with in the mode it is in (ic/key-values.ts), first first: its overview's, then the rest it watches. */
 export const leadPaths = (system: ProcessPlantRuntimeInstance, count: number): ReadonlyArray<VariablePath> => {
   const now = plantNowOf(system)
   const first = overviewKeyValues(system.plant, now)

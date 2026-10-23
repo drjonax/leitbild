@@ -137,7 +137,7 @@ export const observableSchema = z.object({
   tag: z.string().min(1).max(64).optional(),
   /** The declared element it is measured on (topology bindings, element classes, alert subjects). */
   element: z.string().min(1).max(200).optional(),
-  /** The Pack's declared lead rank, 1 first; an observation's mode-aware `rank` goes before it. */
+  /** The Pack's declared lead rank, 1 first: how an element's values rank (an object's lead read comes in its Pack's own order). */
   lead: z.number().int().positive().optional(),
   /** Read over decades (an intermediate-range current): below the step its decimals show, written as a power of ten, never as 0. */
   decades: z.literal(true).optional(),
@@ -151,8 +151,6 @@ export const observationSchema = stampSchema.extend({
   quality: z.enum(['good', 'uncertain', 'bad', 'stale', 'not-applicable']),
   /** Pack-evaluated, mode- and demand-aware: the value's colour. */
   priority: prioritySchema,
-  /** Mode-aware lead order. */
-  rank: z.number().int().optional(),
   expected: z.object({ after: z.string().min(1) }).strict().optional(),
   since: stampSchema.optional(),
   /** The id of the declared threshold of this observable the value is past: the one whose alarm colours it, or would if not expected after. */

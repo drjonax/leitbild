@@ -349,10 +349,8 @@ describe('an element default leads with its declared lead values (Q22)', () => {
       observables: [...declaration.observables, ...extra] as never,
     }),
     read: async request => {
-      if (!('refs' in request)) return base.read(request)
-      const known = request.refs.filter(entry => !added.has(entry))
-      const read = known.length === 0 ? { observations: [], unknown: [], refused: [] } : await base.read({ refs: known })
-      return { ...read, observations: [...read.observations, ...request.refs.filter(entry => added.has(entry)).map(entry => ({ ref: entry, at: read.observations[0]?.at ?? '2026-01-01T08:00:00.000Z', clock: 'simulation', value: entry === ref('valve') ? 'open' : 1, quality: 'good', priority: 'none' }) as never)] }
+      const read = await base.read({ ...request, refs: (request.refs ?? []).filter(entry => !added.has(entry)) })
+      return { ...read, observations: [...read.observations, ...(request.refs ?? []).filter(entry => added.has(entry)).map(entry => ({ ref: entry, at: read.observations[0]?.at ?? '2026-01-01T08:00:00.000Z', clock: 'simulation', value: entry === ref('valve') ? 'open' : 1, quality: 'good', priority: 'none' }) as never)] }
     },
   })
   /** The values a state's values view shows now: its named refs, or what its lead request leads with (compiled). */
