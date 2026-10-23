@@ -16,8 +16,8 @@
  *       frames        an alarmed drawn item is framed within one sample, and stays framed; at the end every drawn
  *                     element with an active plant alert of caution or worse is framed
  *       worst-chip    the frame's worst chip shows within one sample, and stays
- *       leads         within one sample of the mode change the lead rows are the ones World composes for the unit
- *                     now (POST displays/default), no longer the at-power set
+ *       leads         each time World's lead set for the unit changes while the Run plays (POST displays/default,
+ *                     read every second), the display shows the new set within one sample; it ends on World's set
  *       no-clipped    throughout: no value clipped by a box that hides overflow, or hidden sideways in a box that
  *                     scrolls (a column scrolled out of a narrow window)
  *       no-overrun    throughout: no drawn value running past the room its drawing reserved for it (W0.6)
@@ -124,6 +124,10 @@ const runSize = async (config: {
     }
     const modeAtPower = await modeOf()
     const playSim = Date.parse((await api.presence(copy)).execution.currentSimulationTime)
+    // World's lead rows for the unit as it composes them now, each time they change while the Run plays: the
+    // display must follow every change within one sample (a set can change again after the trip, as readings
+    // leave their validity).
+    const worldLeads: Array<{ readonly simMs: number; readonly labels: ReadonlyArray<string> }> = atPowerExpected === null ? [] : [{ simMs: playSim, labels: atPowerExpected }]
     const known = new Set(((await api.objects(copy)).find(object => object.id === subject)?.alerts ?? []).map((alert: any) => alert.id))
 
     // Play, and watch the display and the plant side by side.
@@ -146,6 +150,10 @@ const runSize = async (config: {
         if (modeMs === null && upsetMs !== null) {
           const mode = await modeOf()
           if (mode !== null && mode !== modeAtPower) modeMs = Date.parse((await api.presence(copy)).execution.currentSimulationTime)
+        }
+        if (fresh !== null) {
+          const labels = leadLabels((await api.defaultView(copy, subject)).view)
+          if (!sameList(labels, worldLeads.at(-1)!.labels)) worldLeads.push({ simMs: Date.parse((await api.presence(copy)).execution.currentSimulationTime), labels })
         }
         if (upsetMs !== null && stopAt - Date.now() > config.afterS * 1_000 + 5_000) stopAt = Date.now() + config.afterS * 1_000
       }
@@ -194,7 +202,13 @@ const runSize = async (config: {
     const framesLag = lagOf(state => state.framed.length > 0 || state.framedSymbols > 0, upsetMs)
     const chipLag = lagOf(state => state.worst !== null, upsetMs)
     const leadsTarget = postTripExpected
-    const leadsLag = leadsTarget === null ? null : lagOf(state => sameList(state.leads.map(lead => lead.label), leadsTarget), modeMs ?? upsetMs)
+    // Each change of World's lead set: how long until the display showed it (World's read lands up to a second
+    // after the change, so a display read up to 1 s before it counts).
+    const leadChanges = worldLeads.slice(1).map(change => {
+      const shown = polls.find(poll => poll.simMs !== null && poll.simMs >= change.simMs - 1_000 && sameList(poll.state.leads.map(lead => lead.label), change.labels))
+      return { at: new Date(change.simMs).toISOString().slice(11, 19), labels: change.labels, lagS: shown === undefined ? null : Math.max(0, (shown.simMs! - change.simMs) / 1000) }
+    })
+    const leadsFollow = leadChanges.length > 0 && leadChanges.every(change => change.lagS !== null && change.lagS <= ONE_SAMPLE_S)
     // Without World's oracle (the pre-swap display): only whether, and when, the lead rows left the at-power set.
     const atPowerLabels = atPower.leads.map(lead => lead.label)
     const switchLag = lagOf(state => state.leads.length > 0 && !sameList(state.leads.map(lead => lead.label), atPowerLabels), upsetMs)
@@ -212,9 +226,9 @@ const runSize = async (config: {
       { id: 'worst-chip', release: 'R1', pass: upsetMs === null ? null : held(chipLag), detail: `worst chip ${chipLag.lagS === null ? 'never' : `${chipLag.lagS} s`} after the upset, kept in ${kept(chipLag)} of reads after; at the end "${last.worst ?? '-'}"`, shot: shots['1-first-sample-after-upset'] },
       {
         id: 'leads', release: 'R1',
-        pass: leadsTarget === null || leadsLag === null ? (atPower.generation === 'old' && atPowerLabels.length > 0 ? switchLag.lagS !== null : null) : within(leadsLag) && !sameList(leadsTarget, atPowerExpected ?? []),
+        pass: leadsTarget === null ? (atPower.generation === 'old' && atPowerLabels.length > 0 ? switchLag.lagS !== null : null) : leadsFollow && sameList(last.leads.map(lead => lead.label), leadsTarget),
         detail: leadsTarget === null ? `${atPower.generation === 'old' ? 'the pre-swap display composes its own leads (no World oracle)' : 'World composes no default here'}; the lead rows left the at-power set ${switchLag.lagS === null ? 'never' : `${switchLag.lagS} s after the upset`}; at power: ${atPowerLabels.join(' | ') || '(none in the DOM at this size)'}; at the end: ${last.leads.map(lead => lead.label).join(' | ') || '(none in the DOM at this size)'}`
-          : `mode changed ${modeMs === null || upsetMs === null ? '(not seen)' : `${(modeMs - upsetMs) / 1000} s after the upset`}; display leads match World's post-trip default ${leadsLag?.lagS === null ? 'never' : `${leadsLag!.lagS} s after`}; at power: ${atPower.leads.map(lead => lead.label).join(' | ')}; World now: ${leadsTarget.join(' | ')}; display at the end: ${last.leads.map(lead => lead.label).join(' | ')}`,
+          : `mode changed ${modeMs === null || upsetMs === null ? '(not seen)' : `${(modeMs - upsetMs) / 1000} s after the upset`}; World's lead set changed ${leadChanges.length} times while the Run played${leadChanges.map(change => ` (at ${change.at}, shown ${change.lagS === null ? 'never' : `${change.lagS} s after`})`).join(',')}; at power: ${atPower.leads.map(lead => lead.label).join(' | ')}; World at the end: ${leadsTarget.join(' | ')}; display at the end: ${last.leads.map(lead => lead.label).join(' | ')}`,
         shot: shots['2-upset+10s'],
       },
       {
@@ -233,6 +247,8 @@ const runSize = async (config: {
       size, copy, displayWidth: atPower.frame?.width ?? null, generation: atPower.generation,
       events: { playSim: new Date(playSim).toISOString(), upset: upsetMs === null ? null : new Date(upsetMs).toISOString(), trip: tripMs === null ? null : new Date(tripMs).toISOString(), modeChange: modeMs === null ? null : new Date(modeMs).toISOString(), modeAtPower, modeReadsFailed },
       atPower: { worst: atPower.worst, leads: atPower.leads, alerts: atPower.alerts, word: atPower.word, badValues: badValues(atPower) },
+      worldLeads: worldLeads.map(entry => ({ at: new Date(entry.simMs).toISOString(), labels: entry.labels })),
+      leadChanges,
       end: { worst: last.worst, leads: last.leads, alerts: last.alerts, framed: last.framed, framedSymbols: last.framedSymbols, word: last.word, sim: last.sim, badValues: badValues(last), scrolled: last.values.filter(value => value.status.startsWith('scrolled')).length },
       checks,
       timeline: polls.map(poll => ({ wall: poll.wall, sim: poll.state.sim, word: poll.state.word, worst: poll.state.worst, rows: poll.state.alerts?.rows.length ?? null, framed: poll.state.framed.length, leads: poll.state.leads.map(lead => lead.label).join(' | '), bad: badValues(poll.state).length })),
