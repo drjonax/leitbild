@@ -137,19 +137,26 @@ export const derivedObservables = (objectId: ObjectId, plant: CompiledProcessPla
   })()]),
 ]
 
+/** A position as the share of its travel, 0 to 1. */
+const travelOf = (value: number, unit: string | undefined): number => (unit === 'percent' ? value / 100 : value)
+
 /** Where a state signal or a command to it stands: at its on or off end, or between. */
 const endOf = (state: ItemState, value: unknown, unit: string | undefined): 'on' | 'off' | 'between' | null => {
   if (typeof value === 'boolean') return value ? 'on' : 'off'
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   if (state.aspect.aspect === 'position') {
-    const travel = unit === 'percent' ? value / 100 : value
+    const travel = travelOf(value, unit)
     return travel < SHUT_BELOW ? 'off' : travel > OPEN_ABOVE ? 'on' : 'between'
   }
   // A flow runs equipment only above its no-flow band (a turbine while steam drives it); a speed as it reads.
   return (state.aspect.state?.reading === 'flow' ? value !== 0 && Math.abs(value) >= state.noFlowBelow : value > 0) ? 'on' : 'off'
 }
 
-/** How a command an item does not follow is written: "CMD RUN", as the Plant's control panel writes a demand ("CMD 40 %"), in the room a drawing keeps for the state word it stands in for. */
+/**
+ * How a command an item does not follow is written: "CMD RUN", as the Plant's control panel writes a demand, and for a
+ * valve commanded to part of its travel the opening it was commanded to ("CMD 40 %"), in the room a drawing keeps for
+ * the state word it stands in for ("CMD part open" would not fit it).
+ */
 export const commandNotFollowed = (word: string): string => `CMD ${word}`
 
 /**
@@ -167,7 +174,8 @@ const unfollowed = (system: ProcessPlantRuntimeInstance, state: ItemState, now: 
   const issued = system.operations?.log().filter(record => record.path === command && record.value === read.value).at(-1)
   const heldMs = issued === undefined ? undefined : system.runtime.elapsedMs() - issued.elapsedMs
   const allowance = followAllowanceMs(1_000 * (wanted === 'off' ? travel.offS : travel.onS))
-  return heldMs !== undefined && heldMs <= allowance ? undefined : commandNotFollowed(wanted === 'between' ? 'part open' : state.words[wanted])
+  if (heldMs !== undefined && heldMs <= allowance) return undefined
+  return commandNotFollowed(wanted === 'between' ? `${Math.round(100 * travelOf(Number(read.value), read.unit))} %` : state.words[wanted])
 }
 
 /** A derived observable's reading now, by the path it is declared at (never a signal's). */

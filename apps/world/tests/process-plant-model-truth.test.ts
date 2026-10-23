@@ -19,6 +19,7 @@ import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { derivedObservables, readDerived } from '../src/packs/process-plant/observation/derived.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
+import { STATE_CHARACTERS } from '../src/features/displays/topology/flow-sizing.ts'
 import { orderWord } from '../src/ui/embed/vignette/readout.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
@@ -72,6 +73,14 @@ describe('the pressurizer PORV', () => {
 
     // The PORV's state says it is open and that its demand disagrees.
     expect(plantRun.stateOf('pressurizer.reliefValve')).toEqual({ word: 'OPEN', why: 'CMD SHUT' })
+
+    // Commanded to part of its travel, it writes the opening it was commanded to, in the room of its state word.
+    const demand = resolveProcessPlantSignalBinding(graph, { tagId: 'PORV-456A' as never }).path
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: demand, value: 0.4 })
+    plantRun.run(1_000)
+    const stuck = plantRun.stateOf('pressurizer.reliefValve')
+    expect(stuck).toEqual({ word: 'OPEN', why: 'CMD 40 %' })
+    expect(stuck.why!.length).toBeLessThanOrEqual(STATE_CHARACTERS)
   })
 
   test('a partly failed PORV reads the opening it fails to', () => {
