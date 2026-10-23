@@ -139,13 +139,18 @@ describe('grid observation declarations (N2)', () => {
   test('lead: alarmed values first, then the grid-wide values; declarations answer unchanged for a held revision; unknown elements refused', () => {
     const run = overloadedCorridor()
     const grids = new Map([[run.grid.definition.gridId, run.grid]])
-    const lead = observationShapes.read.output.parse(gridObservationReadQuery.answer({ lead: { objectId: 'grid:test-corridor', count: 8 } }, grids))
+    const lead = observationShapes.read.output.parse(gridObservationReadQuery.answer({ refs: [], lead: { objectId: 'grid:test-corridor', count: 8 } }, grids))
     const alarmed = new Set([...run.grid.alarms.records.values()].filter(record => record.active).map(record => `grid:test-corridor#${gridAlarmSignal(record)}`))
-    const refs = lead.observations.map(observation => observation.ref)
+    const refs = lead.lead!
     expect(refs[0]).toBe('grid:test-corridor#branch:g-a.loading')
     expect(refs.slice(0, alarmed.size).every(ref => alarmed.has(ref))).toBe(true)
     expect(refs[alarmed.size]).toBe('grid:test-corridor#grid.frequency')
-    expect(lead.observations.map(observation => observation.rank)).toEqual(refs.map((_, index) => index + 1))
+    expect(lead.observations.map(observation => observation.ref)).toEqual(refs)
+    // Read with refs, the lead comes in the same answer: the refs' values first, the lead's others after, each once.
+    const both = observationShapes.read.output.parse(gridObservationReadQuery.answer({ refs: ['grid:test-corridor#grid.frequency', 'grid:test-corridor#branch:nowhere.flow'], lead: { objectId: 'grid:test-corridor', count: 8 } }, grids))
+    expect(both.lead).toEqual(refs)
+    expect(both.observations.map(observation => observation.ref)).toEqual(['grid:test-corridor#grid.frequency', ...refs.filter(ref => ref !== 'grid:test-corridor#grid.frequency')])
+    expect(both.unknown).toEqual(['grid:test-corridor#branch:nowhere.flow'])
     const first = observationShapes.declarations.output.parse(gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'] }, grids)).declarations[0]!
     // The grid-wide values the lead goes on with are those declaring a lead rank, in its order.
     const ranked = 'observables' in first ? first.observables.filter(observable => observable.lead !== undefined).sort((left, right) => left.lead! - right.lead!).map(observable => observable.ref) : []

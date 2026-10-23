@@ -34,18 +34,14 @@ const plantLike = (base: ViewRun['port'], tripped: () => boolean): ViewRun['port
   }),
   read: async request => {
     const at = (await base.read({ refs: [ref('speed')] })).observations[0]?.at ?? '2026-01-01T08:00:00.000Z'
-    const value = (signal: string, rank?: number) => ({ ref: ref(signal), at, clock: 'simulation', quality: 'good', priority: 'none',
-      value: signal === 'tripCommand' || signal === 'rodsIn' ? tripped() : signal === 'flux' ? 0.4 : 50, ...(rank === undefined ? {} : { rank }) }) as never
-    if (!('refs' in request)) {
-      const base_ = await base.read(request)
-      if (request.lead.objectId !== 'unit:one') return base_
-      // At power the engine's power and output lead; tripped, its flux, then power.
-      const lead = tripped() ? ['flux', 'power'] : ['power', 'output']
-      return { ...base_, observations: [...lead.map((signal, at_) => value(signal, at_ + 1)), ...base_.observations.map(observation => ({ ...observation, rank: (observation.rank ?? 0) + 2 }))] }
-    }
-    const known = request.refs.filter(entry => !added.has(entry))
-    const read = known.length === 0 ? { observations: [], unknown: [], refused: [] } : await base.read({ refs: known })
-    return { ...read, observations: [...read.observations, ...request.refs.filter(entry => added.has(entry)).map(entry => value(entry.slice(entry.indexOf('#') + 1)))] }
+    const value = (entry: string) => ({ ref: entry, at, clock: 'simulation', quality: 'good', priority: 'none',
+      value: entry === ref('tripCommand') || entry === ref('rodsIn') ? tripped() : entry === ref('flux') ? 0.4 : 50 }) as never
+    const read = await base.read({ ...request, refs: (request.refs ?? []).filter(entry => !added.has(entry)) })
+    // At power the engine's power and output lead the unit; tripped, its flux, then power; then the fixture's own lead.
+    const engine = (tripped() ? ['flux', 'power'] : ['power', 'output']).map(ref)
+    const leads = (request.leads ?? []).map((lead, at_) => lead.objectId === 'unit:one' ? [...engine, ...read.leads[at_]!] : read.leads[at_]!)
+    const extra = [...new Set([...request.refs ?? [], ...leads.flat()])].filter(entry => added.has(entry))
+    return { ...read, observations: [...read.observations, ...extra.map(value)], leads }
   },
 })
 

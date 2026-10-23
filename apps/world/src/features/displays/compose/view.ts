@@ -9,8 +9,8 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import { routeDistanceMeters } from '../../../core/model/route.ts'
 import type { Observation } from '../../../core/observation/model.ts'
 import { alertRows, leadsObject, priorityRank, worstFirst, type AlertRow } from '../alerts/rows.ts'
-import { declaredRefs, valueOf, visibleObject, type Declared } from './declared.ts'
-import { leadNow } from './defaults.ts'
+import { declarationOf, declaredRefs, valueOf, visibleObject, type Declared } from './declared.ts'
+import { planLead, readLeads, type LeadPlan } from './defaults.ts'
 import {
   ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type RecordedSeries, type ResolvedView, type SlotDeclaration, type VignetteSample,
   type VignetteSection, type VignetteState, type VignetteValue, type VignetteView,
@@ -28,7 +28,7 @@ type SlotValue = VignetteSample['slots'][string][string]
 
 /**
  * What a state names: refs of its chips, values and trends in view order, the objects of its other views and of its
- * lead requests (topology adds its binding refs once scoped); given what its lead requests lead with now (leadsNow),
+ * lead requests (topology adds its binding refs once scoped); given what its lead requests lead with now (readNow),
  * those refs in their views' places.
  */
 export const readsOf = (state: VignetteState, leads?: ReadonlyMap<number, ReadonlyArray<string>>): { readonly refs: ReadonlyArray<string>; readonly objectIds: ReadonlyArray<string> } => ({
@@ -39,13 +39,50 @@ export const readsOf = (state: VignetteState, leads?: ReadonlyMap<number, Readon
         : view.kind === 'values' && view.lead !== undefined ? [view.lead.objectId] : []))],
 })
 
-/** Each values view's refs now, by view index, where it holds a lead request: its named refs, then what the request leads with (leadNow), in its rows. */
-export const leadsNow = async (run: ComposeRun, state: VignetteState): Promise<ReadonlyMap<number, ReadonlyArray<string>>> => {
-  const leads = new Map<number, ReadonlyArray<string>>()
-  for (const [index, view] of state.views.entries()) {
-    if (view.kind === 'values' && view.lead !== undefined) leads.set(index, [...new Set([...view.refs ?? [], ...(await leadNow(run, view.lead)).refs])].slice(0, view.rows))
+/** What a state reads now (readNow). */
+export interface StateReading {
+  /** Each values view's refs now, by view index, where it holds a lead request: its named refs, then what the request leads with, in its rows. */
+  readonly leads: ReadonlyMap<number, ReadonlyArray<string>>
+  /** The refs its views show now: its values, trends and chips, what its lead requests lead with, and what its drawings bind. */
+  readonly refs: ReadonlyArray<string>
+  /** Those refs' values now, in that order. */
+  readonly observations: ReadonlyArray<Observation>
+}
+
+/** The refs a state's drawings bind, as each is scoped now. */
+const bindingsOf = async (run: ComposeRun, state: VignetteState): Promise<ReadonlyArray<string>> => {
+  const binding: string[] = []
+  for (const view of state.views) {
+    if (view.kind !== 'topology') continue
+    const graph = await topologyOf(run, view.objectId)
+    const scoped = graph === null ? null : scopeWithin(graph, view.request)
+    if (scoped?.ok === true) binding.push(...bindingRefs(scoped.scoped))
   }
-  return leads
+  return binding
+}
+
+/**
+ * A state read now in one read (R1 perf: a sample asks each object once): what its views name and its drawings bind,
+ * and what its lead requests read (an object's lead; an element's values and its stop's commands), so a display
+ * opened before an upset leads as its Pack does after it, within one sample. Each lead request's rows come from that
+ * one answer.
+ */
+export const readNow = async (run: ComposeRun, state: VignetteState): Promise<StateReading> => {
+  // The declarations and drawings its plans read, asked together: each Pack query waits for the Run's operations
+  // before it reads, and asked at once they wait once, as the one read after them does.
+  await Promise.all(state.views.flatMap((view): ReadonlyArray<Promise<unknown>> => view.kind === 'topology' ? [topologyOf(run, view.objectId)]
+    : view.kind === 'values' && view.lead !== undefined ? [declarationOf(run, view.lead.objectId), ...view.lead.element === undefined ? [] : [declarationOf(run, view.lead.objectId, [view.lead.element])]] : []))
+  const plans = new Map<number, LeadPlan>()
+  for (const [index, view] of state.views.entries()) if (view.kind === 'values' && view.lead !== undefined) plans.set(index, await planLead(run, view.lead, view.rows))
+  const bound = await bindingsOf(run, state)
+  const { observations, led } = await readLeads(run, [...plans.values()], [...readsOf(state).refs, ...bound])
+  const leads = new Map([...plans.keys()].map((index, at) => {
+    const view = state.views[index] as Extract<VignetteState['views'][number], { kind: 'values' }>
+    return [index, [...new Set([...view.refs ?? [], ...led[at]!.refs])].slice(0, view.rows)] as const
+  }))
+  const refs = [...new Set([...readsOf(state, leads).refs, ...bound])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
+  const values = new Map(observations.map(observation => [observation.ref, observation] as const))
+  return { leads, refs, observations: refs.flatMap(ref => values.get(ref) ?? []) }
 }
 
 /** Parallel values (one element class, each element in its own group, one value per quantity): a table, one line per element; else null. */
@@ -146,7 +183,7 @@ export const framedBy = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'm
 }
 
 export const compileVignette = async (run: ComposeRun, state: VignetteState): Promise<VignetteView> => {
-  const leads = await leadsNow(run, state)
+  const { leads } = await readNow(run, state)
   const declared = await declaredRefs(run, readsOf(state, leads).refs)
   const values = (refs: ReadonlyArray<string>): ReadonlyArray<VignetteValue> => refs.flatMap(ref => declared.has(ref) ? [valueOf(declared.get(ref)!)] : [])
   const sections: VignetteSection[] = []
@@ -228,27 +265,13 @@ export const alertRowsFor = (run: ComposeRun, view: Extract<ResolvedView, { kind
   return 1 + Math.max(1, Math.min(rows.length, Math.max(6, leading)))
 }
 
-/** The refs a state's views read now: its values and trends, what its lead requests lead with (leadsNow) and what its drawings bind. */
-export const refsRead = async (run: ComposeRun, state: VignetteState, leads?: ReadonlyMap<number, ReadonlyArray<string>>): Promise<ReadonlyArray<string>> => {
-  const binding: string[] = []
-  for (const view of state.views) {
-    if (view.kind !== 'topology') continue
-    const graph = await topologyOf(run, view.objectId)
-    const scoped = graph === null ? null : scopeWithin(graph, view.request)
-    if (scoped?.ok === true) binding.push(...bindingRefs(scoped.scoped))
-  }
-  return [...new Set([...readsOf(state, leads ?? await leadsNow(run, state)).refs, ...binding])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
-}
-
 /**
- * Everything a state's views read now, each lead request read again (its values now in `leads`, so a display opened
- * before an upset leads as its Pack does after it, within one sample); history (from `fromMs`, Run time) only when asked, on open
- * and after a gap.
+ * Everything a state's views read now, in one read (readNow), each lead request read again (its values now in `leads`,
+ * so a display opened before an upset leads as its Pack does after it, within one sample); history (from `fromMs`,
+ * Run time) only when asked, on open and after a gap.
  */
 export const sampleVignette = async (run: ViewRun, state: VignetteState, history?: { readonly fromMs: number }): Promise<VignetteSample> => {
-  const led = await leadsNow(run, state)
-  const refs = await refsRead(run, state, led)
-  const observations: ReadonlyArray<Observation> = refs.length === 0 ? [] : (await run.port.read({ refs })).observations
+  const { leads: led, observations } = await readNow(run, state)
   const leadDeclared = led.size === 0 ? new Map<string, Declared>() : await declaredRefs(run, [...led.values()].flat())
   const leads = Object.fromEntries([...led].map(([index, list]) => [index, list.flatMap(ref => leadDeclared.has(ref) ? [valueOf(leadDeclared.get(ref)!)] : [])] as const))
   const alerts = new Map<string, AlertRow>()

@@ -10,7 +10,7 @@
 import type { z } from 'zod'
 import { refObjectId } from '../../../core/model/alerts.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
-import type { ObservationDeclaration, observationShapes } from '../../../core/observation/capabilities.ts'
+import { OBSERVATION_READ_REFS, type ObservationDeclaration, type observationShapes } from '../../../core/observation/capabilities.ts'
 import type { Observation } from '../../../core/observation/model.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import type { PackObservationContribution, WorldPack } from '../../../core/packs/protocol.ts'
@@ -21,12 +21,21 @@ export interface ObservationRefusal {
   readonly objectId: ObjectId
   readonly refused: { readonly code: string; readonly message: string }
 }
+/** An object's lead: the first `count` values it leads with now, as its Pack ranks them. */
+export interface LeadAsk { readonly objectId: ObjectId; readonly count: number }
+/** Values by ref and objects' leads, read together: each object is asked once, its refs and its lead in one call. */
+export interface ObservationReadRequest {
+  readonly refs?: ReadonlyArray<string>
+  readonly leads?: ReadonlyArray<LeadAsk>
+}
 export interface ObservationReadResult {
+  /** The refs' values, then the leads' values not among them; each once. */
   readonly observations: ReadonlyArray<Observation>
   readonly unknown: ReadonlyArray<string>
   readonly refused: ReadonlyArray<ObservationRefusal>
+  /** What each asked lead leads with, in the order asked, first first; each value is in `observations`. A refused object's is empty. */
+  readonly leads: ReadonlyArray<ReadonlyArray<string>>
 }
-export type ObservationReadRequest = { readonly refs: ReadonlyArray<string> } | { readonly lead: { readonly objectId: ObjectId; readonly count: number } }
 
 export interface ObservationPort {
   /** One entry per requested object, in order. */
@@ -99,16 +108,23 @@ export const createObservationPort = (config: {
     return cached
   }
 
-  const readOne = async (objectId: ObjectId, input: { readonly refs: ReadonlyArray<string> } | { readonly lead: { readonly objectId: ObjectId; readonly count: number } }): Promise<Output<'read'> | ObservationRefusal> => {
+  type ReadInput = { readonly refs: ReadonlyArray<string>; readonly lead?: LeadAsk }
+  const readOne = async (objectId: ObjectId, input: ReadInput): Promise<Output<'read'> | ObservationRefusal> => {
     const target = observed(objectId)
     if (isRefusal(target)) return target
     const outcome = await asCaller<Output<'read'>>(objectId, target.provider.read, input)
     if (isRefusal(outcome)) return outcome
-    const asked = 'refs' in input ? new Set(input.refs) : null
-    const strays = [...outcome.observations.map(observation => observation.ref), ...outcome.unknown]
-      .filter(ref => asked === null ? refObjectId(ref) !== objectId : !asked.has(ref))
-    if (strays.length > 0 || ('lead' in input && outcome.observations.length > input.lead.count)) {
-      throw new Error(`${target.provider.read} answered beyond its request: ${strays.join(', ') || 'too many lead values'}`)
+    // Every value answers a ref asked or the lead, every unknown ref was asked, and the lead is the object's, each value read.
+    const led = outcome.lead ?? []
+    const asked = new Set(input.refs)
+    const read = new Set(outcome.observations.map(observation => observation.ref))
+    const strays = [
+      ...[...read].filter(ref => !asked.has(ref) && !led.includes(ref)),
+      ...outcome.unknown.filter(ref => !asked.has(ref)),
+      ...led.filter(ref => refObjectId(ref) !== objectId || !read.has(ref)),
+    ]
+    if (strays.length > 0 || (input.lead === undefined) !== (outcome.lead === undefined) || led.length > (input.lead?.count ?? 0)) {
+      throw new Error(`${target.provider.read} answered beyond its request: ${strays.join(', ') || 'a lead not asked as asked'}`)
     }
     return outcome
   }
@@ -120,19 +136,28 @@ export const createObservationPort = (config: {
       return answers
     },
     read: async request => {
-      const groups = new Map<ObjectId, string[]>()
-      if ('refs' in request) for (const ref of request.refs) groups.set(refObjectId(ref), [...groups.get(refObjectId(ref)) ?? [], ref])
+      // One call per object (as many refs as one read names): its refs, and its lead with the first of them (the most any ask counts).
+      const groups = new Map<ObjectId, { refs: string[]; lead?: LeadAsk }>()
+      const groupOf = (objectId: ObjectId) => groups.get(objectId) ?? groups.set(objectId, { refs: [] }).get(objectId)!
+      for (const ref of new Set(request.refs ?? [])) groupOf(refObjectId(ref)).refs.push(ref)
+      for (const lead of request.leads ?? []) {
+        const group = groupOf(lead.objectId)
+        if (group.lead === undefined || group.lead.count < lead.count) group.lead = { objectId: lead.objectId, count: lead.count }
+      }
       const observations: Observation[] = []
       const unknown: string[] = []
       const refused: ObservationRefusal[] = []
-      const calls = 'lead' in request ? [[request.lead.objectId, request] as const]
-        : [...groups].flatMap(([objectId, refs]) => Array.from({ length: Math.ceil(refs.length / 64) }, (_, index) => [objectId, { refs: refs.slice(index * 64, index * 64 + 64) }] as const))
-      for (const [objectId, input] of calls) {
-        const outcome = await readOne(objectId, input)
-        if (isRefusal(outcome)) refused.push(outcome)
-        else { observations.push(...outcome.observations); unknown.push(...outcome.unknown) }
+      const led = new Map<ObjectId, ReadonlyArray<string>>()
+      for (const [objectId, group] of groups) {
+        for (let at = 0; at === 0 || at < group.refs.length; at += OBSERVATION_READ_REFS) {
+          const outcome = await readOne(objectId, { refs: group.refs.slice(at, at + OBSERVATION_READ_REFS), ...(at === 0 && group.lead !== undefined ? { lead: group.lead } : {}) })
+          if (isRefusal(outcome)) { refused.push(outcome); break }
+          observations.push(...outcome.observations)
+          unknown.push(...outcome.unknown)
+          if (outcome.lead !== undefined) led.set(objectId, outcome.lead)
+        }
       }
-      return { observations, unknown, refused }
+      return { observations, unknown, refused, leads: (request.leads ?? []).map(lead => (led.get(lead.objectId) ?? []).slice(0, lead.count)) }
     },
     topology: async objectId => {
       const target = observed(objectId)
@@ -156,13 +181,13 @@ export const createObservationPort = (config: {
 /**
  * The port one request reads through (a sample, a compose, one Capability call): it asks the Packs for each
  * declaration, topology, lead and value once, so every view of the request sees one answer, read at one instant, and
- * each Pack query, which reads the Run where it stands, is made once (R1 perf: a lead request reads its object's
- * declaration, lead and own values before the sample reads its views).
+ * each Pack query, which reads the Run where it stands, is made once. A sample reads its views' values and its lead
+ * requests' in one read (R1 perf), and whatever reads them again later in the request is answered from it.
  */
 export const requestPort = (port: ObservationPort): ObservationPort => {
   const declarations = new Map<string, Promise<ObservationDeclaration | ObservationRefusal>>()
   const topologies = new Map<ObjectId, Promise<TopologyGraph | ObservationRefusal>>()
-  const leads = new Map<string, Promise<ObservationReadResult>>()
+  const leads = new Map<string, Promise<ReadonlyArray<string>>>()
   const readings = new Map<string, Observation>()
   const unread = new Set<string>()
   const once = <K, V>(asked: Map<K, Promise<V>>, key: K, ask: () => Promise<V>): Promise<V> => {
@@ -170,6 +195,7 @@ export const requestPort = (port: ObservationPort): ObservationPort => {
     asked.set(key, known)
     return known
   }
+  const leadKey = (lead: LeadAsk): string => `${lead.objectId}|${lead.count}`
   return {
     declarations: async (objectIds, elementIds) => {
       const answers: Array<ObservationDeclaration | ObservationRefusal> = []
@@ -179,20 +205,25 @@ export const requestPort = (port: ObservationPort): ObservationPort => {
       return answers
     },
     read: async request => {
-      if ('lead' in request) {
-        return once(leads, JSON.stringify(request.lead), async () => {
-          const answer = await port.read(request)
-          for (const observation of answer.observations) readings.set(observation.ref, observation)
-          return answer
-        })
-      }
-      // Only what the request has not read yet goes to the Packs; the answer keeps the order asked.
-      const asked = [...new Set(request.refs)]
+      // Only what the request has not read yet goes to the Packs, in one read; the answer keeps the order asked.
+      const asked = [...new Set(request.refs ?? [])]
       const fresh = asked.filter(ref => !readings.has(ref) && !unread.has(ref))
-      const answer = fresh.length === 0 ? { observations: [], unknown: [], refused: [] } : await port.read({ refs: fresh })
-      for (const observation of answer.observations) readings.set(observation.ref, observation)
-      for (const ref of answer.unknown) unread.add(ref)
-      return { observations: asked.flatMap(ref => readings.get(ref) ?? []), unknown: asked.filter(ref => unread.has(ref)), refused: answer.refused }
+      const freshLeads = [...new Map((request.leads ?? []).filter(lead => !leads.has(leadKey(lead))).map(lead => [leadKey(lead), lead] as const)).values()]
+      let refused: ReadonlyArray<ObservationRefusal> = []
+      if (fresh.length > 0 || freshLeads.length > 0) {
+        const answer = port.read({ refs: fresh, leads: freshLeads }).then(read => {
+          for (const observation of read.observations) readings.set(observation.ref, observation)
+          for (const ref of read.unknown) unread.add(ref)
+          return read
+        })
+        freshLeads.forEach((lead, at) => leads.set(leadKey(lead), answer.then(read => read.leads[at]!)))
+        refused = (await answer).refused
+      }
+      const led = await Promise.all((request.leads ?? []).map(lead => leads.get(leadKey(lead))!))
+      return {
+        observations: [...new Set([...asked, ...led.flat()])].flatMap(ref => readings.get(ref) ?? []),
+        unknown: asked.filter(ref => unread.has(ref)), refused, leads: led,
+      }
     },
     topology: objectId => once(topologies, objectId, () => port.topology(objectId)),
   }

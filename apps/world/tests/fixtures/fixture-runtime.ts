@@ -144,8 +144,8 @@ const unitDeclaration = (unit: OperationalObject, recorded: boolean): Observatio
 const unitObservations = (unit: OperationalObject, at: IsoTimestamp): ReadonlyArray<Observation> => {
   const speed = unit.spatial.position?.speedMps ?? 0
   return [
-    { ref: `${unit.id}#speed`, at, clock: 'simulation', value: speed, quality: 'good', priority: speed > overspeedMps ? 'caution' : 'none', rank: 1 },
-    { ref: `${unit.id}#status`, at, clock: 'simulation', value: unit.operational.status, quality: 'good', priority: 'none', rank: 2 },
+    { ref: `${unit.id}#speed`, at, clock: 'simulation', value: speed, quality: 'good', priority: speed > overspeedMps ? 'caution' : 'none' },
+    { ref: `${unit.id}#status`, at, clock: 'simulation', value: unit.operational.status, quality: 'good', priority: 'none' },
   ]
 }
 const unitTopology = (unit: OperationalObject): TopologyGraph => ({
@@ -389,9 +389,15 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
       [fixtureObservationIds.read]: (raw, viewer) => {
         const input = observationShapes.read.input.parse(raw)
         const at = runClock.read().currentTime
-        if ('lead' in input) return { observations: unitObservations(unitFor(input.lead.objectId, viewer), at).slice(0, input.lead.count), unknown: [] }
         const values = new Map(input.refs.flatMap(ref => unitObservations(unitFor(objectIdSchema.parse(ref.slice(0, ref.indexOf('#'))), viewer), at)).map(entry => [entry.ref, entry]))
-        return { observations: input.refs.flatMap(ref => values.get(ref) ?? []), unknown: input.refs.filter(ref => !values.has(ref)) }
+        const observations = input.refs.flatMap(ref => values.get(ref) ?? [])
+        // A unit leads with its speed, then its status; those not already read are appended.
+        const lead = input.lead === undefined ? undefined : unitObservations(unitFor(input.lead.objectId, viewer), at).slice(0, input.lead.count)
+        return {
+          observations: [...observations, ...(lead ?? []).filter(entry => !input.refs.includes(entry.ref))],
+          unknown: input.refs.filter(ref => !values.has(ref)),
+          ...(lead === undefined ? {} : { lead: lead.map(entry => entry.ref) }),
+        }
       },
       [fixtureObservationIds.topology]: (raw, viewer) => {
         const input = observationShapes.topology.input.parse(raw)

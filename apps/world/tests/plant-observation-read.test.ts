@@ -27,7 +27,10 @@ const readAll = async (): Promise<ReadonlyArray<Observation>> => {
   return read
 }
 const path = (observation: Observation): string => observation.ref.slice(observation.ref.indexOf('#') + 1)
-const lead = async () => (await port.read({ lead: { objectId: plant.plantId, count: 8 } })).observations
+const lead = async () => {
+  const read = await port.read({ leads: [{ objectId: plant.plantId, count: 8 }] })
+  return read.leads[0]!.map(ref => read.observations.find(observation => observation.ref === ref)!)
+}
 
 const facts: Record<string, any> = {}
 
@@ -101,7 +104,7 @@ describe('plant observation read (P3)', () => {
 
   test('T35: the unit leads with what its mode needs, and a trip changes it', () => {
     expect(facts.leadAtPower.map(path)).toEqual(['core.powerRangePercent', 'pressurizer.pressureMPa', 'vessel.subcoolingMarginC', 'vessel.collapsedLiquidLevelPercent', 'core.coreExitTemperatureC', 'turbine.electricMw', 'containment.pressureMPa', 'offsiteGrid.frequencyHz'])
-    expect(facts.leadAtPower.map((observation: Observation) => observation.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(facts.leadAtPower.every((observation: Observation | undefined) => observation !== undefined)).toBe(true)
     expect(facts.leadTripped.map(path).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'])
     expect(facts.leadTripped.map(path)).not.toContain('turbine.electricMw')
   })

@@ -38,13 +38,13 @@ const signalFor = (grid: GridRuntimeInstance, signalId: string): { readonly sign
   return signal === undefined ? undefined : { signal, id }
 }
 
-const observe = (grid: GridRuntimeInstance, bySignal: ReadonlyMap<string, ReadonlyArray<GridAlarmRecord>>, signalId: string, rank?: number): Observation | undefined => {
+const observe = (grid: GridRuntimeInstance, bySignal: ReadonlyMap<string, ReadonlyArray<GridAlarmRecord>>, signalId: string): Observation | undefined => {
   const found = signalFor(grid, signalId)
   if (found === undefined) return undefined
   const record = bySignal.get(signalId)?.[0] ?? (signalId === 'grid.frequency' && grid.projection.frequencyIslandId !== null ? bySignal.get(gridSignalId('island', grid.projection.frequencyIslandId, 'frequency'))?.[0] : undefined)
   return {
     ref: `${grid.definition.gridId}#${signalId}`, ...found.signal.read(grid, found.id), priority: record === undefined ? 'none' : gridPriority[record.priority],
-    at: grid.projection.updatedAt, clock: 'simulation', ...(rank === undefined ? {} : { rank }),
+    at: grid.projection.updatedAt, clock: 'simulation',
   }
 }
 
@@ -54,20 +54,27 @@ const headline = gridWideSignals.filter(signal => signal.lead !== undefined).sor
 const lead = (grid: GridRuntimeInstance, bySignal: ReadonlyMap<string, ReadonlyArray<GridAlarmRecord>>, count: number): ReadonlyArray<Observation> => {
   const ordered = [...bySignal].sort(([, a], [, b]) => a[0]!.priority - b[0]!.priority || a[0]!.raisedAtElapsedMs - b[0]!.raisedAtElapsedMs).map(([signalId]) => signalId)
   const islands = grid.projection.activeIslandCount > 1 ? grid.projection.islands.filter(island => island.energized).map(island => gridSignalId('island', island.id, 'frequency')) : []
-  return [...new Set([...ordered, ...islands, ...headline, ...gridWideSignals.map(signal => signal.signalId)])].slice(0, count).flatMap((signalId, rank) => observe(grid, bySignal, signalId, rank + 1) ?? [])
+  return [...new Set([...ordered, ...islands, ...headline, ...gridWideSignals.map(signal => signal.signalId)])].slice(0, count).flatMap(signalId => observe(grid, bySignal, signalId) ?? [])
 }
 
 export const gridObservationReadQuery = {
   capability: defineObservationCapability('read', {
     id: 'world.electric-grid.observation.read', title: 'Read Grid observations',
-    description: 'World-internal: the values of declared Grid observables by ref, or the Grid\'s lead values.',
+    description: 'World-internal: the values of declared Grid observables by ref, and the Grid\'s lead values.',
   }),
   answer: (rawInput: unknown, grids: GridRuntimes) => {
     const input = observationShapes.read.input.parse(rawInput)
     const alarmsOf = new Map<GridRuntimeInstance, ReadonlyMap<string, ReadonlyArray<GridAlarmRecord>>>()
     const of = (grid: GridRuntimeInstance) => alarmsOf.get(grid) ?? alarmsOf.set(grid, alarmed(grid)).get(grid)!
-    if ('lead' in input) { const grid = gridFor(grids, input.lead.objectId); return { observations: lead(grid, of(grid), input.lead.count), unknown: [] } }
     const answers = input.refs.map(ref => { const grid = grids.get(refObjectId(ref)); return { ref, observation: grid === undefined ? undefined : observe(grid, of(grid), ref.slice(ref.indexOf('#') + 1)) } })
-    return { observations: answers.flatMap(answer => answer.observation ?? []), unknown: answers.filter(answer => answer.observation === undefined).map(answer => answer.ref) }
+    const observations = answers.flatMap(answer => answer.observation ?? [])
+    // The lead in the same call, its values not already read appended.
+    const led = input.lead === undefined ? undefined : (() => { const grid = gridFor(grids, input.lead.objectId); return lead(grid, of(grid), input.lead.count) })()
+    const asked = new Set(observations.map(observation => observation.ref))
+    return {
+      observations: [...observations, ...(led ?? []).filter(observation => !asked.has(observation.ref))],
+      unknown: answers.filter(answer => answer.observation === undefined).map(answer => answer.ref),
+      ...(led === undefined ? {} : { lead: led.map(observation => observation.ref) }),
+    }
   },
 }

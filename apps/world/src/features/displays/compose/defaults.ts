@@ -8,7 +8,7 @@
  * sample (H1/H2: a display opened before an upset leads with what its Pack
  * leads with after it).
  */
-import { priorityLevels, type AlertState } from '../../../core/model/alerts.ts'
+import { priorityLevels, refObjectId, type AlertState } from '../../../core/model/alerts.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { StoppedLead } from '../../../core/observation/capabilities.ts'
 import type { Observable, Observation, Quantity } from '../../../core/observation/model.ts'
@@ -26,20 +26,50 @@ export type DraftView = Distributive<ResolvedView>
 /** The most rows a lead request reserves: what a column holds of an object's or an element's lead values. */
 export const LEAD_ROWS = 8
 
-/** Declared refs, the Pack's mode-aware rank first (an observation's `rank`), then the declared lead rank, else as given. */
-const byRank = async (run: ComposeRun, refs: ReadonlyArray<string>, observations?: ReadonlyArray<Observation>): Promise<ReadonlyArray<string>> => {
-  if (refs.length === 0) return []
-  const [read, declared] = await Promise.all([observations ?? run.port.read({ refs }).then(answer => answer.observations), declaredRefs(run, refs)])
-  const rank = new Map(read.map(observation => [observation.ref, observation.rank]))
-  const key = (ref: string): number => rank.get(ref) ?? declared.get(ref)?.observable.lead ?? Infinity
-  return refs.filter(ref => declared.has(ref)).map((ref, order) => ({ ref, order })).sort((left, right) => key(left.ref) - key(right.ref) || left.order - right.order).map(entry => entry.ref)
+/** The most values one lead read gives: what a lead request may lead with, its own states aside. */
+const PACK_LEAD = 16
+
+/** A read's answer as lead requests take it: each value by ref, and what each object's lead read leads with. */
+export interface LeadReading {
+  readonly value: (ref: string) => Observation | undefined
+  readonly led: (objectId: ObjectId) => ReadonlyArray<string>
+}
+/** What a lead request leads with now, ranked, and every value it may lead with (`pool`, what its rows are reserved for). */
+export interface Led { readonly refs: ReadonlyArray<string>; readonly pool: ReadonlyArray<string> }
+/**
+ * A lead request planned from what its Pack declares: the refs it reads (an element's values it may lead with in its
+ * rows, and its stop's commands), the object whose lead it reads, and what it leads with once that read answers (`now`).
+ */
+export interface LeadPlan {
+  readonly refs: ReadonlyArray<string>
+  readonly lead?: ObjectId
+  readonly now: (reading: LeadReading) => Promise<Led>
 }
 
-/** An object's lead values now: its Pack's mode-aware lead read, ranked (byRank), as many as it gives (at most 16). */
+/**
+ * These refs and every plan's in one read, each object asked once with its lead (R1 perf: one Pack read a sample), and
+ * what each plan leads with now from that one answer.
+ */
+export const readLeads = async (run: ComposeRun, plans: ReadonlyArray<LeadPlan>, refs: ReadonlyArray<string> = []): Promise<{ readonly observations: ReadonlyArray<Observation>; readonly led: ReadonlyArray<Led> }> => {
+  const objects = [...new Set(plans.flatMap(plan => plan.lead ?? []))]
+  const asked = [...new Set([...refs, ...plans.flatMap(plan => plan.refs)])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
+  const read = await run.port.read({ refs: asked, leads: objects.map(objectId => ({ objectId, count: PACK_LEAD })) })
+  const values = new Map(read.observations.map(observation => [observation.ref, observation] as const))
+  const reading: LeadReading = { value: ref => values.get(ref), led: objectId => read.leads[objects.indexOf(objectId)] ?? [] }
+  return { observations: read.observations, led: await Promise.all(plans.map(plan => plan.now(reading))) }
+}
+
+/** A lead read's values the caller may read (declared), in its Pack's order. */
+const declaredOf = async (run: ComposeRun, refs: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
+  const declared = await declaredRefs(run, refs)
+  return refs.filter(ref => declared.has(ref))
+}
+
+/** An object's lead values now: its Pack's mode-aware lead read, in its order, as many as it gives (at most 16). */
 export const leadRefs = async (run: ComposeRun, objectId: ObjectId, count = LEAD_ROWS): Promise<ReadonlyArray<string>> => {
   if (visibleObject(run, objectId) === undefined) return []
-  const read = await run.port.read({ lead: { objectId, count: 16 } })
-  return (await byRank(run, read.observations.map(observation => observation.ref), read.observations)).slice(0, count)
+  const read = await run.port.read({ leads: [{ objectId, count: PACK_LEAD }] })
+  return (await declaredOf(run, read.leads[0] ?? [])).slice(0, count)
 }
 
 /**
@@ -50,17 +80,19 @@ export const leadRefs = async (run: ComposeRun, objectId: ObjectId, count = LEAD
 const readable = (measured: boolean) => (observable: Observable): boolean => observable.basis !== 'command' && !(measured && observable.basis === 'model')
 
 /** Whether an element has been stopped now: every reading of one of its stop's `when` sets reads as declared. */
-const stoppedNow = (stopped: StoppedLead, observations: ReadonlyArray<Observation>): boolean =>
-  stopped.when.some(set => set.every(reading => observations.some(observation => observation.ref === reading.ref && observation.value === reading.value)))
+const stoppedNow = (stopped: StoppedLead, reading: LeadReading): boolean =>
+  stopped.when.some(set => set.every(entry => reading.value(entry.ref)?.value === entry.value))
 
 /**
  * An element's values (Q22), each sample: once it has been stopped (D-E), what verifies the stop as its Pack declares
  * (`stopped`: what says an energy source has stopped making energy); then what its detail leads with, as
- * its Pack declares (`lead`, other elements' values among them); then its own instrument readings and states by rank;
- * then its other own values by rank. Never a demand or a simulator-only value (readable), which a request names to show.
- * A device only its topology node stands for: what its node binds. `pool`: every value it may lead with, stopped or not.
+ * its Pack declares (`lead`, other elements' values among them); then its own instrument readings and states by its
+ * Pack's declared rank; then its other own values by that rank. Never a demand or a simulator-only value (readable),
+ * which a request names to show. A device only its topology node stands for: what its node binds. All of it is
+ * declared, so it is planned before the read: the read brings the values its first `rows` may show, stopped or not,
+ * and its stop's commands, which say whether it has been stopped now.
  */
-const elementLead = async (run: ComposeRun, objectId: ObjectId, elementId: string): Promise<{ readonly refs: ReadonlyArray<string>; readonly pool: ReadonlyArray<string> }> => {
+const elementPlan = async (run: ComposeRun, objectId: ObjectId, elementId: string, rows: number): Promise<LeadPlan> => {
   const declaration = await declarationOf(run, objectId, [elementId])
   const element = declaration?.elements.find(entry => entry.id === elementId)
   const own = declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? []
@@ -69,38 +101,51 @@ const elementLead = async (run: ComposeRun, objectId: ObjectId, elementId: strin
   const declared = await declaredRefs(run, [...stop?.lead ?? [], ...element?.lead ?? [], ...refs])
   const measured = (await declarationOf(run, objectId))?.observables.some(observable => observable.basis === 'instrument') === true
   const shown = (ref: string): boolean => declared.has(ref) && readable(measured)(declared.get(ref)!.observable)
-  // One read ranks its own values and says whether the commands that stop it read as written.
-  const asked = [...new Set([...refs.filter(shown), ...stop?.when.flat().map(reading => reading.ref) ?? []])]
-  const read = asked.length === 0 ? [] : (await run.port.read({ refs: asked })).observations
-  const ranked = await byRank(run, refs.filter(shown), read)
+  const rank = (ref: string): number => declared.get(ref)!.observable.lead ?? Infinity
+  const ranked = refs.filter(shown).map((ref, order) => ({ ref, order })).sort((left, right) => rank(left.ref) - rank(right.ref) || left.order - right.order).map(entry => entry.ref)
   const reading = (ref: string): boolean => declared.get(ref)!.observable.basis === 'instrument' || declared.get(ref)!.observable.quantity === 'state'
   const stopping = (stop?.lead ?? []).filter(shown)
-  const rest = [...(element?.lead ?? []).filter(shown), ...ranked.filter(reading), ...ranked.filter(ref => !reading(ref))]
-  return { refs: [...new Set([...(stop !== undefined && stoppedNow(stop, read) ? stopping : []), ...rest])], pool: [...new Set([...stopping, ...rest])] }
+  const rest = [...new Set([...(element?.lead ?? []).filter(shown), ...ranked.filter(reading), ...ranked.filter(ref => !reading(ref))])]
+  const pool = [...new Set([...stopping, ...rest])]
+  return {
+    refs: [...new Set([...pool.slice(0, rows), ...rest.slice(0, rows), ...stop?.when.flat().map(entry => entry.ref) ?? []])],
+    now: async values => ({ refs: stop !== undefined && stoppedNow(stop, values) ? pool : rest, pool }),
+  }
 }
 
 export const elementRefs = async (run: ComposeRun, objectId: ObjectId, elementId: string, count = LEAD_ROWS): Promise<ReadonlyArray<string>> =>
-  (await elementLead(run, objectId, elementId)).refs.slice(0, count)
+  (await readLeads(run, [await elementPlan(run, objectId, elementId, count)])).led[0]!.refs.slice(0, count)
 
 /**
- * What a lead request leads with now, ranked, and every value it may lead with (`pool`, what its rows are reserved
- * for). An object: its Pack's lead (leadRefs) but its own states, which a whole-object default shows as chips. An
- * element: its values (elementLead); where it is part of another element (a valve inside a vessel), its first four,
- * then that element's not already listed (the vessel's pressure and level), then its own others.
+ * A lead request planned (LeadPlan) for the `rows` it shows. An object: its Pack's lead (leadRefs) but its own states,
+ * which a whole-object default shows as chips. An element: its values (elementPlan); where it is part of another
+ * element (a valve inside a vessel), its first four, then that element's not already listed (the vessel's pressure and
+ * level), then its own others.
  */
-export const leadNow = async (run: ComposeRun, lead: LeadRequest): Promise<{ readonly refs: ReadonlyArray<string>; readonly pool: ReadonlyArray<string> }> => {
-  if (visibleObject(run, lead.objectId) === undefined) return { refs: [], pool: [] }
+export const planLead = async (run: ComposeRun, lead: LeadRequest, rows = LEAD_ROWS): Promise<LeadPlan> => {
+  if (visibleObject(run, lead.objectId) === undefined) return { refs: [], now: async () => ({ refs: [], pool: [] }) }
   if (lead.element === undefined) {
     const own = new Set(await ownStates(run, lead.objectId))
-    const refs = (await leadRefs(run, lead.objectId, 16)).filter(ref => !own.has(ref))
-    return { refs, pool: refs }
+    return { refs: [], lead: lead.objectId, now: async reading => {
+      const refs = (await declaredOf(run, reading.led(lead.objectId))).filter(ref => !own.has(ref))
+      return { refs, pool: refs }
+    } }
   }
-  const own = await elementLead(run, lead.objectId, lead.element)
+  const own = await elementPlan(run, lead.objectId, lead.element, rows)
   const parent = (await declarationOf(run, lead.objectId, [lead.element]))?.elements.find(element => element.id === lead.element)?.parent
-  const hosted = parent === undefined ? { refs: [], pool: [] } : await elementLead(run, lead.objectId, parent)
+  const hosted = parent === undefined ? undefined : await elementPlan(run, lead.objectId, parent, rows)
   const hosting = (list: ReadonlyArray<string>, host: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set([...list.slice(0, 4), ...host, ...list.slice(4)])]
-  return { refs: hosting(own.refs, hosted.refs), pool: hosting(own.pool, hosted.pool) }
+  return {
+    refs: [...new Set([...own.refs, ...hosted?.refs ?? []])],
+    now: async reading => {
+      const [mine, host] = await Promise.all([own.now(reading), hosted?.now(reading) ?? { refs: [], pool: [] }])
+      return { refs: hosting(mine.refs, host.refs), pool: hosting(mine.pool, host.pool) }
+    },
+  }
 }
+
+/** What a lead request leads with now, ranked, and every value it may lead with: its plan for `rows`, read. */
+export const leadNow = async (run: ComposeRun, lead: LeadRequest, rows = LEAD_ROWS): Promise<Led> => (await readLeads(run, [await planLead(run, lead, rows)])).led[0]!
 
 // Each declaration's own states, found once: a declaration is kept by revision, and a lead request asks every sample.
 const ownStatesOf = new WeakMap<object, ReadonlyArray<string>>()

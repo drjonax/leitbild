@@ -43,8 +43,8 @@ const sinceOf = (context: PlantReadContext, seriesId: string, value: unknown): O
   return at === undefined ? undefined : { at, clock: 'simulation' }
 }
 
-/** The Plant's values at these paths, ranked where given; null for a path it does not declare. */
-export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string>, ranked = false): ReadonlyArray<Observation | null> => {
+/** The Plant's values at these paths; null for a path it does not declare. */
+export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string>): ReadonlyArray<Observation | null> => {
   const { system, recording } = context
   const plant = system.plant
   const snapshot = system.protection?.snapshot()
@@ -53,15 +53,15 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
   const pending = snapshot === undefined ? [] : pendingActions(plant, snapshot, system.runtime.elapsedMs())
   let judged: ReadonlyArray<SafetyFunctionEvaluation> | undefined
   const safetyFunctions = () => judged ??= evaluateSafetyFunctions(plant, system.runtime)
-  return paths.map((path, index) => {
+  return paths.map(path => {
     const declared = declaredObservable(context.objectId, plant, recording, path)
     if (declared === null) return null
     const binding = plant.graph.signalBindingByPath.get(path as VariablePath)
-    if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation', ...(ranked ? { rank: index + 1 } : {}) }
+    if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation' }
     // A reading the model qualifies measures nothing while its flag is off: no value, not applicable, never a colour.
     const qualified = qualifiedReadings(plant).get(path)
     if (qualified !== undefined && system.runtime.readVariableSnapshot(qualified.flag).value !== true) {
-      return { ref: declared.ref, value: null, quality: 'not-applicable', at: context.simulationTime, clock: 'simulation', priority: 'none', why: `measures nothing unless ${qualified.words}`, ...(ranked ? { rank: index + 1 } : {}) }
+      return { ref: declared.ref, value: null, quality: 'not-applicable', at: context.simulationTime, clock: 'simulation', priority: 'none', why: `measures nothing unless ${qualified.words}` }
     }
     const variable = system.runtime.readVariableSnapshot(binding.path)
     const limitsOf = (ruleId: string) => declared.thresholds.filter(threshold => threshold.id === ruleId || threshold.id.startsWith(`${ruleId}#`))
@@ -86,7 +86,6 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
       at: context.simulationTime,
       clock: 'simulation',
       priority,
-      ...(ranked ? { rank: index + 1 } : {}),
       ...(expected === undefined ? {} : { expected: { after: expected.after!.label } }),
       ...(since === undefined ? {} : { since }),
       ...(past === undefined ? {} : { past: past.id }),
@@ -96,7 +95,7 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
   })
 }
 
-/** The values the unit leads with in the mode it is in (ic/key-values.ts), ranked: its overview's first, then the rest it watches. */
+/** The values the unit leads with in the mode it is in (ic/key-values.ts), first first: its overview's, then the rest it watches. */
 export const leadPaths = (system: ProcessPlantRuntimeInstance, count: number): ReadonlyArray<VariablePath> => {
   const now = plantNowOf(system)
   const first = overviewKeyValues(system.plant, now)

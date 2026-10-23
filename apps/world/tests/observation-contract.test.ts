@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { defineObservationCapability, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
+import { defineObservationCapability, OBSERVATION_READ_REFS, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
 import {
   decimalsFor, numberShown, numberText, observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema, unitDecimals, unitSymbol,
 } from '../src/core/observation/model.ts'
@@ -178,20 +178,28 @@ describe('observation Capabilities', () => {
     expect(input.parse({ objectIds: ['unit-2'], known: { 'unit-2': 'digest-1' } }).known).toEqual({ 'unit-2': 'digest-1' })
   })
 
-  test('a read names refs or asks for an object\'s lead, never both', () => {
+  test('a read names refs, asks for an object\'s lead, or both in one call; never nothing', () => {
     const input = observationShapes.read.input
     expect(input.safeParse({ refs: ['unit-2#A'] }).success).toBe(true)
-    expect(input.safeParse({ lead: { objectId: 'unit-2', count: 6 } }).success).toBe(true)
-    expect(input.safeParse({ refs: ['unit-2#A'], lead: { objectId: 'unit-2', count: 6 } }).success).toBe(false)
-    expect(input.safeParse({ lead: { objectId: 'unit-2', count: 17 } }).success).toBe(false)
-    expect(input.safeParse({ refs: Array.from({ length: 65 }, (_, index) => `unit-2#s${index}`) }).success).toBe(false)
+    expect(input.safeParse({ refs: [], lead: { objectId: 'unit-2', count: 6 } }).success).toBe(true)
+    expect(input.safeParse({ refs: ['unit-2#A'], lead: { objectId: 'unit-2', count: 6 } }).success).toBe(true)
+    expect(input.safeParse({ refs: [] }).success).toBe(false)
+    expect(input.safeParse({ lead: { objectId: 'unit-2', count: 6 } }).success).toBe(false)
+    expect(input.safeParse({ refs: [], lead: { objectId: 'unit-2', count: 17 } }).success).toBe(false)
+    expect(input.safeParse({ refs: Array.from({ length: OBSERVATION_READ_REFS }, (_, index) => `unit-2#s${index}`) }).success).toBe(true)
+    expect(input.safeParse({ refs: Array.from({ length: OBSERVATION_READ_REFS + 1 }, (_, index) => `unit-2#s${index}`) }).success).toBe(false)
+    // The lead's values come in order, at most sixteen.
+    const output = observationShapes.read.output
+    expect(output.safeParse({ observations: [], unknown: [], lead: ['unit-2#A', 'unit-2#B'] }).success).toBe(true)
+    expect(output.safeParse({ observations: [], unknown: [], lead: Array.from({ length: 17 }, (_, index) => `unit-2#s${index}`) }).success).toBe(false)
   })
 
   test('each Capability names the objects it inspects, from refs, a lead or an object id', () => {
     const inspected = (kind: keyof typeof observationShapes, input: unknown): ReadonlyArray<string> => observationShapes[kind].inspectObjectIds(input)
     expect(inspected('declarations', { objectIds: ['unit-1', 'unit-2'] })).toEqual(['unit-1', 'unit-2'])
     expect(inspected('read', { refs: ['unit-2#A', 'unit-2#B', 'grid#bus:7/v'] })).toEqual(['unit-2', 'grid'])
-    expect(inspected('read', { lead: { objectId: 'unit-2', count: 6 } })).toEqual(['unit-2'])
+    expect(inspected('read', { refs: [], lead: { objectId: 'unit-2', count: 6 } })).toEqual(['unit-2'])
+    expect(inspected('read', { refs: ['grid#bus:7/v'], lead: { objectId: 'unit-2', count: 6 } })).toEqual(['grid', 'unit-2'])
     expect(inspected('topology', { objectId: 'unit-2' })).toEqual(['unit-2'])
     expect(() => inspected('read', { refs: ['no-object'] })).toThrow()
   })

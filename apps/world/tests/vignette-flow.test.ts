@@ -113,7 +113,7 @@ describe('flow layout', () => {
 
 type Topology = Extract<VignetteSection, { kind: 'topology' }>
 const at = '2026-10-21T12:00:00.000Z'
-const observation = (ref: string, value: Observation['value'], quality: Observation['quality'] = 'good'): Observation => ({ ref, at, clock: 'simulation', value, quality, priority: 'none', rank: 1 })
+const observation = (ref: string, value: Observation['value'], quality: Observation['quality'] = 'good'): Observation => ({ ref, at, clock: 'simulation', value, quality, priority: 'none' })
 
 // A tank feeding two alike movers into a valve and a header: the layout as the engine would give it, in grid units.
 const section: Topology = {
