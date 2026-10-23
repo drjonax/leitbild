@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { composeDefault, composeVignette, type ComposeOutcome } from '../../features/displays/compose/compose.ts'
 import { vignetteStateSchema, type VignetteState } from '../../features/displays/compose/model.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../../features/displays/compose/view.ts'
+import { requestPort } from '../../features/displays/observation/port.ts'
 import { recordedHoldMs } from '../../features/historian/policy.ts'
 import { capabilityJsonSchema } from '../../simulation/capabilities.ts'
 import { VIGNETTE_ROW_PX } from '../../ui/embed/vignette/grid.ts'
@@ -34,15 +35,16 @@ export const vignetteHeight = (rows: number): number => Math.min(EMBEDDED_VIEW_M
 const composedSchema = z.object({ view: embeddedViewPublicationSchema, card: displayCardSchema }).strict()
 
 /**
- * A loaded Run as the composer reads it, as this caller: its objects, Packs and clock, the Scenario connections the
- * Run was loaded with (checked once at load, never re-read per call), and what the caller may not inspect.
+ * A loaded Run as the composer reads it, as this caller, for one request: its objects, Packs and clock, the Scenario
+ * connections the Run was loaded with (checked once at load, never re-read per call), what the caller may not inspect,
+ * and a port that reads each value once for the request (requestPort).
  */
 export const displayRunOf = async (registry: SimulationRunRegistry, runtime: SimulationRunRuntime, actor: Actor, denied: ReadonlySet<string>): Promise<ViewRun> => {
   // The Run and its Scenario are one load: after a reset or copy reload it, this runtime is not the one loaded.
   if (registry.get(runtime.id) !== runtime) throw Object.assign(new Error(`Simulation Run ${runtime.id} was reloaded; ask again`), { code: 'simulation_run_closed' })
   const snapshot = runtime.snapshot()
   return {
-    objects: snapshot.objects, denied, packs: runtime.packs(), port: runtime.observations(actor), clock: snapshot.clock,
+    objects: snapshot.objects, denied, packs: runtime.packs(), port: requestPort(runtime.observations(actor)), clock: snapshot.clock,
     connections: registry.loadedCompiledScenario(runtime.id).connections,
     // The Historian's record, from one hold before `from`, so the value held into the window's start is drawn; with that hold.
     series: (seriesId, from, to) => {

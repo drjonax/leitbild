@@ -152,3 +152,48 @@ export const createObservationPort = (config: {
     },
   }
 }
+
+/**
+ * The port one request reads through (a sample, a compose, one Capability call): it asks the Packs for each
+ * declaration, topology, lead and value once, so every view of the request sees one answer, read at one instant, and
+ * each Pack query, which reads the Run where it stands, is made once (R1 perf: a lead request reads its object's
+ * declaration, lead and own values before the sample reads its views).
+ */
+export const requestPort = (port: ObservationPort): ObservationPort => {
+  const declarations = new Map<string, Promise<ObservationDeclaration | ObservationRefusal>>()
+  const topologies = new Map<ObjectId, Promise<TopologyGraph | ObservationRefusal>>()
+  const leads = new Map<string, Promise<ObservationReadResult>>()
+  const readings = new Map<string, Observation>()
+  const unread = new Set<string>()
+  const once = <K, V>(asked: Map<K, Promise<V>>, key: K, ask: () => Promise<V>): Promise<V> => {
+    const known = asked.get(key) ?? ask()
+    asked.set(key, known)
+    return known
+  }
+  return {
+    declarations: async (objectIds, elementIds) => {
+      const answers: Array<ObservationDeclaration | ObservationRefusal> = []
+      for (const objectId of objectIds) {
+        answers.push(await once(declarations, JSON.stringify([objectId, elementIds ?? null]), async () => (await port.declarations([objectId], elementIds))[0]!))
+      }
+      return answers
+    },
+    read: async request => {
+      if ('lead' in request) {
+        return once(leads, JSON.stringify(request.lead), async () => {
+          const answer = await port.read(request)
+          for (const observation of answer.observations) readings.set(observation.ref, observation)
+          return answer
+        })
+      }
+      // Only what the request has not read yet goes to the Packs; the answer keeps the order asked.
+      const asked = [...new Set(request.refs)]
+      const fresh = asked.filter(ref => !readings.has(ref) && !unread.has(ref))
+      const answer = fresh.length === 0 ? { observations: [], unknown: [], refused: [] } : await port.read({ refs: fresh })
+      for (const observation of answer.observations) readings.set(observation.ref, observation)
+      for (const ref of answer.unknown) unread.add(ref)
+      return { observations: asked.flatMap(ref => readings.get(ref) ?? []), unknown: asked.filter(ref => unread.has(ref)), refused: answer.refused }
+    },
+    topology: objectId => once(topologies, objectId, () => port.topology(objectId)),
+  }
+}
