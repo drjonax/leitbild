@@ -102,9 +102,17 @@ export const leadNow = async (run: ComposeRun, lead: LeadRequest): Promise<{ rea
   return { refs: hosting(own.refs, hosted.refs), pool: hosting(own.pool, hosted.pool) }
 }
 
+// Each declaration's own states, found once: a declaration is kept by revision, and a lead request asks every sample.
+const ownStatesOf = new WeakMap<object, ReadonlyArray<string>>()
+
 /** An object's own states: declared on it, not on an element (an operating mode, safety-function statuses); a whole-object default heads with them. */
-export const ownStates = async (run: ComposeRun, objectId: ObjectId): Promise<ReadonlyArray<string>> =>
-  (await declarationOf(run, objectId))?.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref).slice(0, 8) ?? []
+export const ownStates = async (run: ComposeRun, objectId: ObjectId): Promise<ReadonlyArray<string>> => {
+  const declaration = await declarationOf(run, objectId)
+  if (declaration === null) return []
+  const known = ownStatesOf.get(declaration) ?? declaration.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref).slice(0, 8)
+  ownStatesOf.set(declaration, known)
+  return known
+}
 
 export const recordedOf = async (run: ComposeRun, refs: ReadonlyArray<string>, count: number): Promise<ReadonlyArray<string>> => {
   const declared = await declaredRefs(run, refs)

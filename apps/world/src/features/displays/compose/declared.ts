@@ -36,19 +36,30 @@ export const declarationOf = async (run: SearchRun, objectId: string, elementIds
 const elementOf = (declaration: ObservationDeclaration, id: string | undefined): VignetteElement | undefined =>
   id === undefined ? undefined : declaration.elements.find(entry => entry.id === id)
 
-/** The declarations of these refs, by ref; a ref the caller may not read is absent. */
+// Each declaration's observables by ref, with their place in it, built once: a declaration is kept by revision across
+// requests, and each sample of a lead request looks its refs up several times.
+const indexes = new WeakMap<ObservationDeclaration, ReadonlyMap<string, { readonly observable: ObservationDeclaration['observables'][number]; readonly at: number }>>()
+const indexOf = (declaration: ObservationDeclaration) => indexes.get(declaration) ?? (() => {
+  const index = new Map<string, { readonly observable: ObservationDeclaration['observables'][number]; readonly at: number }>()
+  declaration.observables.forEach((observable, at) => { if (!index.has(observable.ref)) index.set(observable.ref, { observable, at }) })
+  indexes.set(declaration, index)
+  return index
+})()
+
+/** The declarations of these refs, by ref, in their declaration's order; a ref the caller may not read is absent. */
 export const declaredRefs = async (run: SearchRun, refs: ReadonlyArray<string>): Promise<ReadonlyMap<string, Declared>> => {
   const found = new Map<string, Declared>()
+  const asking = new Set(refs)
   for (const objectId of new Set(refs.map(refObjectId))) {
     const object = visibleObject(run, objectId)
     const base = await declarationOf(run, objectId)
     if (object === undefined || base === null) continue
     const add = (declaration: ObservationDeclaration): void => {
-      for (const observable of declaration.observables) {
-        if (refs.includes(observable.ref) && !found.has(observable.ref)) {
-          const element = elementOf(declaration, observable.element) ?? elementOf(base, observable.element)
-          found.set(observable.ref, { observable, object, ...(element === undefined ? {} : { element }) })
-        }
+      const index = indexOf(declaration)
+      const hits = [...asking].flatMap(ref => (found.has(ref) ? [] : index.get(ref) ?? [])).sort((left, right) => left.at - right.at)
+      for (const { observable } of hits) {
+        const element = elementOf(declaration, observable.element) ?? elementOf(base, observable.element)
+        found.set(observable.ref, { observable, object, ...(element === undefined ? {} : { element }) })
       }
     }
     add(base)
