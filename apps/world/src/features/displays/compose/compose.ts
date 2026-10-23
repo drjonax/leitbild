@@ -169,7 +169,7 @@ const answered = async (run: ComposeRun, drafts: ReadonlyArray<DraftView>): Prom
 }))
 
 /** Defaults of several subjects as one vignette: views of a kind merge; at most four, values first. */
-const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>): ReadonlyArray<DraftView> => {
+const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>, quiet: (view: DraftView) => boolean): ReadonlyArray<DraftView> => {
   const merged: DraftView[] = []
   for (const view of lists.flat()) {
     const known = merged.find(entry => entry.kind === view.kind)
@@ -181,7 +181,11 @@ const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>): Readonly
     else if (known === undefined || view.kind === 'slots') merged.push(structuredClone(view) as DraftView)
   }
   const order = ['values', 'trend', 'slots', 'alerts', 'entity', 'collection', 'topology', 'map']
-  return merged.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind)).slice(0, 4)
+  const sorted = merged.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind))
+  // Every default holds its alerts view (plan §2 rule 3); where they hold more views than four, one with nothing to
+  // list gives way first, so an answer on two entities keeps their map.
+  const giving = new Set(sorted.filter(quiet).slice(0, Math.max(0, sorted.length - 4)))
+  return sorted.filter(view => !giving.has(view)).slice(0, 4)
 }
 
 const covers = (views: ReadonlyArray<ResolvedView>, subject: Subject): boolean => views.some(view => {
@@ -439,7 +443,8 @@ export const composeVignette = async (run: ComposeRun, spec: DisplaySpec): Promi
   const kept: Kept = { refs: new Set(subjects.flatMap(subject => subject.kind === 'observable' ? [subject.ref] : [])), explicit: new Set() }
   if (spec.views.length === 0) {
     const defaults = await Promise.all(subjects.map(async subject => answered(run, await defaultViews(run, subject))))
-    return finish(run, spec.title, 'assistant', subjects, mergeDefaults(defaults), kept, 'chat', await chipsOf(run, subjects))
+    const quiet = (view: DraftView): boolean => view.kind === 'alerts' && view.objectIds !== 'run' && alertsOf(run, { ...view, rows: 1 }).length === 0
+    return finish(run, spec.title, 'assistant', subjects, mergeDefaults(defaults, quiet), kept, 'chat', await chipsOf(run, subjects))
   }
   const views: DraftView[] = []
   for (const [index, view] of spec.views.entries()) {

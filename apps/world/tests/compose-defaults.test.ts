@@ -207,6 +207,14 @@ describe('World defaults of every subject kind', () => {
     expect(drone.view.sections[0]?.kind === 'slots' && drone.view.sections[0].slots.some(slot => slot.key.startsWith('telemetry:'))).toBe(true)
   })
 
+  test('an answer on three entity objects keeps their map: an alerts view with nothing to list gives way past four views', async () => {
+    const subjects = ['drone:halden-search', 'unit:truck-1', 'site:brekke-depot']
+    expect(subjects.flatMap(id => run.objects.find(object => object.id === id)!.alerts)).toEqual([])
+    const outcome = await composeVignette(run, displaySpecSchema.parse({ title: 'Assets', question: 'Where are the drone, the truck and the depot?', subjects, views: [] }))
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    expect(outcome.state.views.map(view => view.kind)).toEqual(['slots', 'slots', 'slots', 'map'])
+  })
+
   test('elements and observables show what is measured on them (plant, grid, weather)', async () => {
     const bus = await opened(run, `grid:halden-four-unit#${await firstElement('grid:halden-four-unit', 'bus')}`)
     expect(kinds(bus.view.sections)).toEqual(expect.arrayContaining(['values', 'topology']))
