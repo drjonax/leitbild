@@ -16,16 +16,28 @@ export interface Window {
   readonly end: number
 }
 
-/** Where a point's value ends: at the next point, at its hold, or at the window's end, whichever comes first. */
-const heldUntil = (points: ReadonlyArray<SeriesPoint>, index: number, end: number, holdMs: number): number => Math.min(points[index + 1]?.t ?? end, points[index]!.t + holdMs, end)
+/**
+ * A pen's record as a display draws it: the record served with its hold, the live points after it, and from when its
+ * reading has measured nothing (bad, or outside its declared validity), which its last value holds no further.
+ */
+export interface DrawnSeries extends RecordedSeries {
+  readonly silentFrom?: number
+}
 
-/** Step-and-hold SVG path: each point holds until the next, until `window.end` at most, and breaks where the next comes after its hold. */
-export const stepPath = (points: ReadonlyArray<SeriesPoint>, x: (t: number) => number, y: (v: number) => number, window: Window, holdMs: number): string => {
+/** Where a point's value ends: at the next point, at its hold, at the window's end, or the last where its reading went silent, whichever comes first. */
+const heldUntil = (points: ReadonlyArray<SeriesPoint>, index: number, end: number, holdMs: number, silentFrom?: number): number => {
+  const point = points[index]!
+  const next = points[index + 1]?.t ?? (silentFrom !== undefined && silentFrom >= point.t ? silentFrom : end)
+  return Math.min(next, point.t + holdMs, end)
+}
+
+/** Step-and-hold SVG path: each point holds until the next, until `window.end` at most, and breaks where the next comes after its hold or the reading went silent. */
+export const stepPath = (points: ReadonlyArray<SeriesPoint>, x: (t: number) => number, y: (v: number) => number, window: Window, holdMs: number, silentFrom?: number): string => {
   const commands: string[] = []
   let open = false
   points.forEach((point, index) => {
     const next = points[index + 1]
-    const holdEnd = heldUntil(points, index, window.end, holdMs)
+    const holdEnd = heldUntil(points, index, window.end, holdMs, silentFrom)
     if (holdEnd < window.start || point.t > window.end) { open = false; return }
     const level = y(point.v).toFixed(1)
     commands.push(`${open ? 'L' : 'M'}${x(Math.max(point.t, window.start)).toFixed(1)} ${level}`, `L${x(holdEnd).toFixed(1)} ${level}`)
@@ -150,7 +162,7 @@ export const limitLabelYs = (ys: ReadonlyArray<number>, room: { readonly height:
 export const stripDrawing = (input: {
   readonly pens: ReadonlyArray<VignetteValue>
   /** Each pen's record by ref, with its hold. */
-  readonly series: ReadonlyMap<string, RecordedSeries>
+  readonly series: ReadonlyMap<string, DrawnSeries>
   readonly observations: ReadonlyArray<Pick<Observation, 'ref' | 'priority'>>
   readonly now: number
   readonly horizonMs: number
@@ -161,7 +173,7 @@ export const stripDrawing = (input: {
   // What each pen draws: every point whose value holds into the window.
   const held = input.pens.map(pen => {
     const recorded = input.series.get(pen.ref)
-    return recorded === undefined ? [] : recorded.points.filter((point, index, points) => point.t <= window.end && heldUntil(points, index, window.end, recorded.holdMs) >= window.start)
+    return recorded === undefined ? [] : recorded.points.filter((point, index, points) => point.t <= window.end && heldUntil(points, index, window.end, recorded.holdMs, recorded.silentFrom) >= window.start)
   })
   const shown = held.flat().map(point => point.v)
   if (shown.length === 0) return null
@@ -186,7 +198,7 @@ export const stripDrawing = (input: {
       const recorded = input.series.get(pen.ref)
       return {
         ref: pen.ref,
-        path: recorded === undefined ? '' : stepPath(recorded.points, x, y, window, recorded.holdMs),
+        path: recorded === undefined ? '' : stepPath(recorded.points, x, y, window, recorded.holdMs, recorded.silentFrom),
         dash: PEN_DASHES[index % PEN_DASHES.length]!,
         tone: toneOf(input.observations.find(observation => observation.ref === pen.ref)?.priority),
       }

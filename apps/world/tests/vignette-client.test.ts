@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { SimulationRunId } from '../src/core/model/ids.ts'
 import type { VignetteSample, VignetteView } from '../src/features/displays/compose/model.ts'
+import { stripDrawing } from '../src/ui/embed/vignette/trend.ts'
 import { createVignetteSession, GAP_MS, INACTIVE_RETRY_MS, SAMPLE_BACKOFF_MS, SAMPLE_INTERVAL_MS, sampleStale, STALE_AFTER_MS, type RunPresence, type VignetteSnapshot } from '../src/ui/embed/vignette/vignette-client.ts'
 
 // The vignette's link to its Run (architecture B1): presence before anything,
@@ -159,12 +160,24 @@ describe('vignette session', () => {
     run.readsAs('not-applicable')
     await run.advance(3_000)
     expect(points()).toBe(before)
+    // Its last value holds no further than the first sample that read it so, not for the record's 90 s hold.
+    const silent = run.last().series.get('unit-1#level')!
+    const last = silent.points.at(-1)!
+    expect(silent.silentFrom).toBeGreaterThan(last.t)
+    expect(silent.silentFrom! - last.t).toBeLessThanOrEqual(1_000)
+    // Drawn a minute later, 1 px a second: the line ends where the reading went silent, not at the strip's end.
+    const now = last.t + 60_000
+    const drawn = stripDrawing({ pens: [levelPen], series: run.last().series, observations: [], now, horizonMs: 600_000, width: 600, height: 60 })
+    const ends = [...drawn!.pens[0]!.path.matchAll(/L(\d+\.\d)/g)].map(match => Number(match[1]))
+    expect(Math.max(...ends)).toBeCloseTo(600 - (now - silent.silentFrom!) / 1_000, 0)
     run.readsAs('bad')
     await run.advance(2_000)
     expect(points()).toBe(before)
+    expect(run.last().series.get('unit-1#level')!.silentFrom).toBe(silent.silentFrom)
     run.readsAs('good')
     await run.advance(2_000)
     expect(points()).toBeGreaterThan(before)
+    expect(run.last().series.get('unit-1#level')!.silentFrom).toBeUndefined()
     run.session.close()
   })
 

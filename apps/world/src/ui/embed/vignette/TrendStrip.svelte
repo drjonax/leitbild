@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { Observation } from '../../../core/observation/model.ts'
-  import type { RecordedSeries, VignetteValue } from '../../../features/displays/compose/model.ts'
+  import type { VignetteValue } from '../../../features/displays/compose/model.ts'
   import { underTitle } from './format.ts'
   import { valueLook } from './readout.ts'
-  import { BEYOND_BOTTOM_INSET, BEYOND_TOP_Y, stripDrawing } from './trend.ts'
+  import { BEYOND_BOTTOM_INSET, BEYOND_TOP_Y, stripDrawing, type DrawnSeries } from './trend.ts'
 
   // One trend strip (architecture B): its pens step-and-hold over the trend's
   // window for the hold served with their record, told apart by dash; the
@@ -14,7 +14,7 @@
     pens: ReadonlyArray<VignetteValue>
     /** The vignette's title: a pen's name drops the object it names. */
     title: string
-    series: ReadonlyMap<string, RecordedSeries>
+    series: ReadonlyMap<string, DrawnSeries>
     observations: ReadonlyArray<Observation>
     now: number
     horizonMs: number

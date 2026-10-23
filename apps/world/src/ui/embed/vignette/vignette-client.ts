@@ -9,8 +9,8 @@
 // about again until someone loads it.
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
-import type { RecordedSeries, VignetteSample, VignetteView } from '../../../features/displays/compose/model.ts'
-import { appendPoint } from './trend.ts'
+import type { VignetteSample, VignetteView } from '../../../features/displays/compose/model.ts'
+import { appendPoint, type DrawnSeries } from './trend.ts'
 
 export interface RunPresence {
   readonly loaded: boolean
@@ -33,7 +33,7 @@ export interface VignetteSnapshot {
   readonly view?: VignetteView
   readonly latest?: VignetteSample
   /** Each trend pen's record by ref, within its trend's horizon, with the hold the Historian served it with. */
-  readonly series: ReadonlyMap<string, RecordedSeries>
+  readonly series: ReadonlyMap<string, DrawnSeries>
   /** The last sample's failure; null once one succeeds again. */
   readonly sampleError: string | null
   /** Wall time of the last sample answered. */
@@ -128,12 +128,14 @@ export const createVignetteSession = (config: {
     const series = new Map(withHistory ? [] : snapshot.series)
     for (const pen of pensOf(view)) {
       // A pen whose record was not served draws nothing: its hold comes with its record, never guessed.
-      const recorded = withHistory ? sample.series?.[pen.seriesId] : series.get(pen.ref)
+      const recorded: DrawnSeries | undefined = withHistory ? sample.series?.[pen.seriesId] : series.get(pen.ref)
       if (recorded === undefined) continue
-      // A reading that is bad or outside its declared validity measures nothing: no point, so the trace breaks there.
+      // A reading that is bad or outside its declared validity measures nothing: no point, and the trace breaks there,
+      // its last value held no further than this sample, until it measures again.
       const observation = sample.observations.find(entry => entry.ref === pen.ref)
       const value = observation?.quality === 'bad' || observation?.quality === 'not-applicable' ? undefined : observation?.value
-      series.set(pen.ref, typeof value === 'number' ? { ...recorded, points: appendPoint(recorded.points, { t: at, v: value }, at - pen.horizonMs) } : recorded)
+      series.set(pen.ref, typeof value === 'number' ? { holdMs: recorded.holdMs, points: appendPoint(recorded.points, { t: at, v: value }, at - pen.horizonMs) }
+        : { ...recorded, silentFrom: recorded.silentFrom ?? at })
     }
     update({ phase: 'live', view: viewWithLeads(view, sample), latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
   }
