@@ -90,7 +90,31 @@ export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): R
  * for beside the energy ends, and the ends, which come first where no energy
  * sink is watched.
  */
-export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): { readonly leads: ReadonlyArray<VariablePath>; readonly ends: ReadonlyArray<VariablePath>; readonly endsFirst: boolean } => {
+export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): OverviewCandidates => {
+  const known = candidatesByPlant.get(plant) ?? new Map<string, OverviewCandidates>()
+  candidatesByPlant.set(plant, known)
+  const key = candidatesKey(plant, now)
+  const cached = known.get(key)
+  if (cached !== undefined) return cached
+  const found = candidatesNow(plant, now)
+  known.set(key, found)
+  if (known.size > CANDIDATE_STATES) known.delete(known.keys().next().value as string)
+  return found
+}
+
+interface OverviewCandidates { readonly leads: ReadonlyArray<VariablePath>; readonly ends: ReadonlyArray<VariablePath>; readonly endsFirst: boolean }
+
+/**
+ * The candidates hang on the mode and, of the Plant's live values, only on which commands each automatic action
+ * writes already read as it writes them (whether it can still act, what it has started), so they are kept by those:
+ * each sample of a lead request reads them again (W0.5), and the graph walk below takes milliseconds.
+ */
+const candidatesByPlant = new WeakMap<CompiledProcessPlant, Map<string, OverviewCandidates>>()
+const CANDIDATE_STATES = 64
+const candidatesKey = (plant: CompiledProcessPlant, now: PlantNow): string =>
+  `${now.mode ?? ''}|${[...automaticActions(plant).values()].map(action => action.writes.map(write => (now.read(write.binding.path) === write.value ? '1' : '0')).join('')).join(',')}`
+
+const candidatesNow = (plant: CompiledProcessPlant, now: PlantNow): OverviewCandidates => {
   const graph = plant.graph
   const ownerOf = (path: VariablePath) => {
     const binding = graph.signalBindingByPath.get(path)

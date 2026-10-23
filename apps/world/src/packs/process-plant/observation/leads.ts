@@ -68,13 +68,24 @@ export const elementLeads = (plant: CompiledProcessPlant, mode: string | null): 
   return leads
 }
 
-/** A short digest of the mode's lead lists (FNV-1a, 8 hex digits): equal lists in two modes give one revision. */
+const digests = new WeakMap<CompiledProcessPlant, Map<string, string>>()
+
+/**
+ * A short digest of the mode's lead lists (FNV-1a, 8 hex digits): equal lists in two modes give one revision. Kept per
+ * mode like the lists it digests, since every declaration asked for computes its revision with it (each sample's).
+ */
 export const leadDigest = (plant: CompiledProcessPlant, mode: string | null): string => {
+  const known = digests.get(plant) ?? new Map<string, string>()
+  digests.set(plant, known)
+  const cached = known.get(mode ?? '')
+  if (cached !== undefined) return cached
   const text = JSON.stringify([...elementLeads(plant, mode)])
   let hash = 0x811c9dc5
   for (let at = 0; at < text.length; at += 1) {
     hash ^= text.charCodeAt(at)
     hash = Math.imul(hash, 0x01000193) >>> 0
   }
-  return hash.toString(16).padStart(8, '0')
+  const digest = hash.toString(16).padStart(8, '0')
+  known.set(mode ?? '', digest)
+  return digest
 }
