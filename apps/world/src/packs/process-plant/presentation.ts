@@ -1,6 +1,7 @@
 import type { OperationalObject } from '../../core/model/index.ts'
 import { packField, packStatus } from '../../core/packs/presentation.ts'
 import type { PackObjectPresentation, PackPresentationContribution } from '../../core/packs/protocol.ts'
+import { processPlantMembers } from './fleet.ts'
 import {
   emptyProcessPlantProjection,
   processPlantUnitPackDataSchema,
@@ -54,6 +55,7 @@ export const processPlantPresentation: PackPresentationContribution = {
   categories: [{
     id: 'process-plants', label: 'Process plants', emptyLabel: 'No process plants',
     matches: (object): boolean => parseUnitData(object) !== null,
+    members: processPlantMembers,
   }],
   presentObject: (object: OperationalObject): PackObjectPresentation => {
     const data = parseUnitData(object)

@@ -112,6 +112,9 @@ const topologyView = async (run: ComposeRun, view: Extract<View, { kind: 'topolo
 
 const resolveView = async (run: ComposeRun, view: View, path: string, subjects: ReadonlyArray<Subject>, kept: Kept): Promise<DraftView | ComposeIssue> => {
   const within = subjects.flatMap(subjectObjects)
+  if (view.kind === 'fleet' || view.kind === 'compare' || ((view.kind === 'trend' || view.kind === 'alerts') && view.of !== undefined)) {
+    return notObserved(path, `World does not compose ${view.kind} views of a set yet`)
+  }
   if (view.kind === 'trend') {
     const refs = await signalRefs(run, view.signals, `${path}.signals`, within, kept, true)
     return isIssue(refs) ? refs : refs.length === 0 ? notObserved(`${path}.signals`, 'none of these is recorded') : { kind: 'trend', refs: [...refs], horizon: view.horizon ?? '10m' }

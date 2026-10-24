@@ -48,6 +48,38 @@ export interface PackObjectCategory {
   readonly rail?: false
   /** The closed list of status words this category's objects show (reserved; supplied with P2's presentation fields). */
   readonly statusWords?: ReadonlyArray<string>
+  /** Opt-in: the category's objects form sets a fleet view lists, one row per member. */
+  readonly members?: PackCategoryMembers
+}
+
+/** One column of a fleet table: a value per member, from the member's canonical state. */
+export interface PackMemberColumn {
+  readonly key: string
+  readonly label: string
+  /** A core unit code (observation/model.ts quantityUnits) for a number; '' for a word. */
+  readonly unit: string
+  /** A word column the aggregate header counts members by, leaving out these steady words. */
+  readonly tally?: { readonly except: ReadonlyArray<string> }
+}
+
+/** How a category's members are grouped and listed: data and pure functions of a canonical object, never physics reads. */
+export interface PackCategoryMembers {
+  /** The group key: members of one group (a plant cluster) are the set `{of: {category, group}}`. */
+  readonly group?: { readonly label: string; readonly of: (object: OperationalObject) => string | undefined }
+  readonly columns: ReadonlyArray<PackMemberColumn>
+  /** A member's value per column key; null where it has none now. */
+  readonly row: (object: OperationalObject) => Readonly<Record<string, string | number | null>>
+}
+
+/**
+ * A quantity every member of a category measures under the same local ref (identical models give identical ids), so
+ * one name compares or trends it across units. `ref` is the part after `objectId#`.
+ */
+export interface PackComparableRole {
+  readonly id: string
+  readonly label: string
+  readonly category: string
+  readonly ref: string
 }
 
 export interface PackObjectPresentation {
@@ -491,6 +523,8 @@ export interface PackObservationContribution {
   readonly declarations: string
   readonly read: string
   readonly topology?: { readonly family: 'flow' | 'network'; readonly capability: string }
+  /** Quantities matched by role across a category's members (compare and set trend views). */
+  readonly comparable?: ReadonlyArray<PackComparableRole>
 }
 
 export interface PackReferenceDataContribution {
