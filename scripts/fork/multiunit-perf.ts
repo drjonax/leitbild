@@ -111,18 +111,29 @@ const shapes = await Promise.all(displays.map(async display => {
   return { name: display.name, views: JSON.parse(display.state).views, sampleBytes: JSON.stringify(sample).length }
 }))
 
-/** Each display frame samples on its own 1 Hz timer, as the embed does; every sample's wall time is kept. */
+/** Each display frame samples on its own timer at 1 Hz on average; every sample's wall time is kept. Each interval is
+ * drawn from 0.5–1.5 s: a fixed 1 s period locks onto World's one-second realtime cadence and measures where in the
+ * busy part of each second the samples land (a median of 34 ms against 7.6 ms spread evenly, N = 24), which §3.3
+ * books to World's tick, not to the display. */
 const sampling = () => {
   const latencies: Record<string, number[]> = Object.fromEntries(displays.map(display => [display.name, []]))
   let failures = 0
-  const timers = displays.map(display => setInterval(async () => {
-    const started = performance.now()
-    try {
-      await request(`${runPath}/displays/sample`, { state: display.state })
-      latencies[display.name]!.push(performance.now() - started)
-    } catch { failures += 1 }
-  }, 1_000))
-  return { stop: () => { for (const timer of timers) clearInterval(timer) }, latencies, failures: () => failures }
+  let stopped = false
+  const timers = new Set<ReturnType<typeof setTimeout>>()
+  const next = (display: typeof displays[number]) => {
+    const timer = setTimeout(async () => {
+      timers.delete(timer)
+      const started = performance.now()
+      try {
+        await request(`${runPath}/displays/sample`, { state: display.state })
+        latencies[display.name]!.push(performance.now() - started)
+      } catch { failures += 1 }
+      if (!stopped) next(display)
+    }, 500 + Math.random() * 1_000)
+    timers.add(timer)
+  }
+  for (const display of displays) next(display)
+  return { stop: () => { stopped = true; for (const timer of timers) clearTimeout(timer) }, latencies, failures: () => failures }
 }
 
 // ---------- measuring ----------
