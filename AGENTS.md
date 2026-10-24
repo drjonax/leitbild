@@ -29,3 +29,12 @@ These rules apply across the repository. Module-local `AGENTS.md` files may add 
 - Only a session that validated a commit deploys it; subagents never push or deploy. Announce a deploy to other live sessions first, and do not deploy while another session's evaluation probe runs on production.
 - The deployer packages working-tree files, including untracked ones. Never leave unfinished files in production paths of a worktree you deploy from.
 - Before deploying: no other deploy may be running (`pgrep -f '^\S*bun\S* .*scripts/deploy\.ts'`), and production `DEPLOYMENT.json` must report `dirty: false` with a `baseCommit` that is an ancestor of the deployed commit, so a deploy never reverts another session's live work. Deploy from a clean worktree with `LEITBILD_KNOWLEDGE_REPOSITORY` pointing at a clean checkout of the wiki's committed `HEAD`.
+
+## Fork: drjonax/leitbild
+
+This checkout is the fork `drjonax/leitbild`. These rules override every upstream delivery and deploy rule above and in module `AGENTS.md` files.
+
+- Never push to, open PRs on, or comment on `michaelhil/leitbild`. Add it as `upstream` with pushes disabled (`git remote set-url --push upstream DISABLED`) and only pull from it: merge `upstream/main` into fork `main` on a `cursor/sync-upstream-…` branch, through a PR to the fork.
+- Never run `bun run deploy` or any probe against `leitbild.app`. Probes run against a loopback `dev:stack` only (`scripts/fork/openai-spend.ts` refuses other origins).
+- The Assistant runs on direct OpenAI: default `gpt-6-luna` with reasoning `none`, fallback OpenAI models only. Spend is capped at $10 a month (an OpenAI project limit with an alert at $7, set by the owner). Eval runs stop at $0.50 on `gpt-6-luna` and $2.00 on `gpt-6-sol` (`scripts/fork/openai-spend.ts`); `LEITBILD_PROBE_BUDGET_USD` may lower a guard, never raise it.
+- Fork-only test scenarios live in `apps/world/tests/fixtures/scenarios/` (`halden-fleet-8`, `halden-fleet-12`), never in the product catalog.
