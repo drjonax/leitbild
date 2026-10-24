@@ -142,6 +142,10 @@ describe('Workspace Host with real Modules', () => {
       tools: [], allowedToolNames: [], dirPath: leitbildHome,
     })
     deployment.sharedSkillStore.register({
+      name: 'multiunit-displays', description: 'Test multi-unit display Skill', body: 'Compose set views when useful.',
+      tools: [], allowedToolNames: [], dirPath: leitbildHome,
+    })
+    deployment.sharedSkillStore.register({
       name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
       tools: [], allowedToolNames: [], dirPath: leitbildHome,
     })

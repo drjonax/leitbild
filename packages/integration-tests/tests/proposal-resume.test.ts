@@ -117,7 +117,7 @@ describe('an approved proposal resumes the procedure with real Modules', () => {
       },
     }
     const deployment = createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(gateway) })
-    for (const name of ['leitbild-assistance', 'operator-displays', 'procedure-runner']) {
+    for (const name of ['leitbild-assistance', 'operator-displays', 'multiunit-displays', 'procedure-runner']) {
       deployment.sharedSkillStore.register({ name, description: `Test ${name}`, body: 'Test skill.', tools: [], allowedToolNames: [], dirPath: leitbildHome })
     }
     deployment.sharedToolRegistry.registerAll(createProductKnowledgeTools())

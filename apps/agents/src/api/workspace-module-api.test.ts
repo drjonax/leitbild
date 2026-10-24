@@ -54,6 +54,10 @@ const withAssistantCatalog = (deployment: DeploymentRuntime): DeploymentRuntime 
     tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
   })
   deployment.sharedSkillStore.register({
+    name: 'multiunit-displays', description: 'Test multi-unit display Skill', body: 'Compose set views when useful.',
+    tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
+  })
+  deployment.sharedSkillStore.register({
     name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
     tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
   })
@@ -164,6 +168,10 @@ describe('Agents Workspace Module API', () => {
       tools: [], allowedToolNames: [], dirPath: home,
     })
     runtime.skillStore.register({
+      name: 'multiunit-displays', description: 'Test multi-unit display Skill', body: 'Compose set views when useful.',
+      tools: [], allowedToolNames: [], dirPath: home,
+    })
+    runtime.skillStore.register({
       name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
       tools: [], allowedToolNames: [], dirPath: home,
     })
@@ -199,7 +207,7 @@ describe('Agents Workspace Module API', () => {
     expect(assistant.getConfig().maxToolIterations).toBe(40)
     // The default model brings its own effort when the definition names neither.
     expect(assistant.getConfig()).toMatchObject({ model: DEFAULT_MODEL_ID, reasoningEffort: DEFAULT_REASONING_EFFORT })
-    expect(assistant.getSkills()).toEqual(['leitbild-assistance', 'operator-displays', 'procedure-runner'])
+    expect(assistant.getSkills()).toEqual(['leitbild-assistance', 'operator-displays', 'multiunit-displays', 'procedure-runner'])
 
     const reused = await open('Now create a scenario.')
     expect(reused.status).toBe(200)
