@@ -1,6 +1,7 @@
 import { capabilityIds,capabilityJsonSchema } from '../../simulation/capabilities.ts'
 import type { PackRuntimeAdapter } from '../../simulation/protocol.ts'
 import { observationShapes, type ObservationCapabilityKind } from '../observation/capabilities.ts'
+import { quantityUnits } from '../observation/model.ts'
 import type { WorldPack } from './protocol.ts'
 
 export interface ValidatedWorldAssembly {
@@ -86,6 +87,40 @@ const assertObservationContribution = (pack: WorldPack, adapters: ReadonlyArray<
   }
 }
 
+const KEY = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/
+const unitCodes = new Set<string>(Object.values(quantityUnits).flat())
+/** The most columns a fleet row holds beside its label. */
+export const MAX_MEMBER_COLUMNS = 8
+
+/** Refuses member columns, groups and comparable roles that a fleet or compare view could not draw from. */
+const assertMemberDeclarations = (pack: WorldPack): void => {
+  const id = pack.descriptor.id
+  for (const category of pack.presentation.categories) {
+    const members = category.members
+    if (members === undefined) continue
+    const where = `Pack ${id} category ${category.id}`
+    if (members.group !== undefined && members.group.label.trim() === '') throw new Error(`${where} declares a group without a label`)
+    if (members.columns.length === 0 || members.columns.length > MAX_MEMBER_COLUMNS) throw new Error(`${where} declares ${members.columns.length} member columns; 1 to ${MAX_MEMBER_COLUMNS}`)
+    assertUnique(members.columns.map(column => column.key), `member column in ${where}`)
+    for (const column of members.columns) {
+      if (!KEY.test(column.key)) throw new Error(`${where} member column key ${column.key} is not a lower-case key`)
+      if (column.label.trim() === '' || column.label.length > 40) throw new Error(`${where} member column ${column.key} needs a label of at most 40 characters`)
+      if (column.unit !== '' && !unitCodes.has(column.unit)) throw new Error(`${where} member column ${column.key} has unit ${column.unit}, not a core unit code`)
+      if (column.tally !== undefined && column.unit !== '') throw new Error(`${where} member column ${column.key} tallies numbers; only word columns are tallied`)
+    }
+  }
+  const comparable = pack.observation?.comparable ?? []
+  const observed = new Set(pack.observation?.categories ?? [])
+  assertUnique(comparable.map(role => role.id), `comparable role in Pack ${id}`)
+  assertUnique(comparable.map(role => `${role.category} ${role.label.toLowerCase()}`), `comparable role label in Pack ${id}`)
+  for (const role of comparable) {
+    if (!KEY.test(role.id)) throw new Error(`Pack ${id} comparable role ${role.id} is not a lower-case key`)
+    if (!observed.has(role.category)) throw new Error(`Pack ${id} comparable role ${role.id} is for ${role.category}, which declares no observations`)
+    if (role.label.trim() === '' || role.label.length > 60) throw new Error(`Pack ${id} comparable role ${role.id} needs a label of at most 60 characters`)
+    if (role.ref.trim() === '' || role.ref.includes('#')) throw new Error(`Pack ${id} comparable role ${role.id} needs a local ref, without its object id`)
+  }
+}
+
 export const validateWorldAssembly = (config: {
   readonly packs: ReadonlyArray<WorldPack>
   readonly runtimeAdapters: ReadonlyArray<PackRuntimeAdapter>
@@ -158,6 +193,7 @@ export const validateWorldAssembly = (config: {
 
   for (const pack of packs) assertContributionDescriptor(pack)
   for (const pack of packs) assertObservationContribution(pack, config.runtimeAdapters.filter(adapter => adapter.packId === pack.descriptor.id))
+  for (const pack of packs) assertMemberDeclarations(pack)
   for (const pack of packs) {
     const scenarioItemTypeIds = Object.keys(pack.scenario?.itemSchemas ?? {}).sort()
     const authoringItemTypeIds = (pack.authoring?.itemTypes ?? []).map(item => item.id).sort()
