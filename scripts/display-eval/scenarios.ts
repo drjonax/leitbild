@@ -107,7 +107,7 @@ export interface Scenario {
   /** Whether the answer should show a display; 'either' is not judged. */
   readonly expect: 'display' | 'none' | 'either'
   readonly run: ScenarioRun
-  readonly keyPanel?: 'trend' | 'comparison' | 'readouts' | 'alarms' | 'mimic'
+  readonly keyPanel?: 'trend' | 'comparison' | 'readouts' | 'alarms' | 'mimic' | 'fleet' | 'compare'
   /** Whether an equipment mimic is expected, to be avoided, or either is fine. */
   readonly mimic?: 'expected' | 'avoid'
   /** Whether a requested display should appear when the answer showed none; absent means either is fine. */
@@ -117,7 +117,7 @@ export interface Scenario {
 
 /** A scenario as the harness runs and scores it. */
 export interface EvalScenario extends Scenario {
-  readonly set: 'dev' | 'near-duplicate' | 'holdout' | 'worry'
+  readonly set: 'dev' | 'near-duplicate' | 'holdout' | 'worry' | 'multiunit'
   readonly flaky: boolean
   readonly evidence: ReadonlyArray<EvidenceKey>
 }
@@ -367,6 +367,58 @@ export const SMOKE_SCENARIO_IDS: ReadonlyArray<string> = [
   'sg-b-runback', 'feed-path-b', 'show-feed-lineup', 'loss-main-feedwater', 'e0-immediate', 'single-state', 'product-question', 'op-afw-throttle',
 ]
 export const smokeScenarios = SMOKE_SCENARIO_IDS.map(id => devScenarios.find(scenario => scenario.id === id)!)
+
+// ---- fork (drjonax/leitbild, multiunit plan T7.1): displays over many like units ----
+
+/** One question about the fleet, asked on the 4-unit Halden complex and on the fork's 12-unit fixture, each with its
+ * own faulted units, so the ranking questions have one right unit and the overview has one unit at caution or above. */
+const FLEETS = [
+  { size: 4, scenario: 'halden-power-complex', faulted: 'plant:halden-2', tripped: ['plant:halden-2', 'plant:halden-3'] },
+  { size: 12, scenario: 'fixture:halden-fleet-12', faulted: 'plant:halden-7', tripped: ['plant:halden-3', 'plant:halden-10'] },
+] as const
+const FLEET_SET = 'of:process-plant/process-plants'
+const fleetRunOf = (scenario: string, setup: ReadonlyArray<SetupStep>, advanceMinutes: number): ScenarioRun => ({ scenario, setup, advanceMinutes })
+// A unit as answers name it: "Unit 7", one of "Units 3 and 10", or its object id. The rules are hand-checked (worry.ts).
+const unitNamed = (objectId: string): string => {
+  const unit = objectId.split('-').at(-1)!
+  return String.raw`\b(?:Units? (?:\d+(?:,? and |, | & ))*${unit}|halden-${unit})\b`
+}
+const ruled = (kind: 'claim' | 'absence', key: string, rationale: string, patterns: ReadonlyArray<string>): EvidenceKey =>
+  ({ key, kind, rationale, status: KEY_STATUS, use: 'P0', patterns })
+
+export const multiunitScenarios: ReadonlyArray<EvalScenario> = FLEETS.flatMap(fleet => [
+  { id: `fleet-${fleet.size}-overview`, expect: 'display' as const, keyPanel: 'fleet' as const,
+    prompt: 'How are the units doing?',
+    run: fleetRunOf(fleet.scenario, [plantAction(fleet.faulted, 'turbine-trip')], 2),
+    evidence: [
+      signal('the fleet: every unit of the set', [FLEET_SET], 'An overview of all units is a view of the set, not of chosen units.'),
+      ruled('claim', `names ${fleet.faulted} as the unit that needs attention`, 'The one unit at caution or above after its turbine trip.', [unitNamed(fleet.faulted), 'trip|attention|alarm|caution|outlier|abnormal']),
+    ] },
+  { id: `fleet-${fleet.size}-furthest-pressurizer`, expect: 'display' as const, keyPanel: 'compare' as const,
+    prompt: 'Which unit is furthest from nominal pressurizer pressure?',
+    run: fleetRunOf(fleet.scenario, [plantAction(fleet.faulted, 'pressurizer-relief-open', { positionPercent: 35 })], 2),
+    evidence: [
+      signal('pressurizer pressure on every unit', ['PT-455', 'pressurizer.pressureMPa'], 'The quantity ranked.'),
+      signal('the set, not chosen units', [FLEET_SET], 'Furthest of all units needs every unit.'),
+      ruled('claim', `names ${fleet.faulted} as furthest`, 'Its relief valve is open.', [unitNamed(fleet.faulted), 'furthest|farthest|lowest|largest|deviat|outlier|below|dropp|falling']),
+    ] },
+  { id: `fleet-${fleet.size}-sg-levels`, expect: 'display' as const, keyPanel: 'compare' as const,
+    prompt: 'Compare SG levels across all units.',
+    run: fleetRunOf(fleet.scenario, [plantAction(fleet.faulted, 'loss-main-feedwater')], 2),
+    evidence: [
+      signal('steam generator levels', SG_LEVELS, 'The quantity compared.'),
+      signal('the set, not chosen units', [FLEET_SET], '"All units".'),
+      ruled('claim', `names ${fleet.faulted} as the unit whose levels fall`, 'Its main feedwater is lost.', [unitNamed(fleet.faulted), 'low|fall|drop|declin|below|outlier|deviat']),
+    ] },
+  { id: `fleet-${fleet.size}-tripped-safety-functions`, expect: 'display' as const,
+    prompt: "Show the tripped units' safety functions.",
+    run: fleetRunOf(fleet.scenario, fleet.tripped.map(unit => plantAction(unit, 'turbine-trip')), 2),
+    evidence: [
+      signal('every tripped unit', [...fleet.tripped], 'Both tripped units, and only by being tripped.', 'all'),
+      ...fleet.tripped.map(unit => ruled('claim', `names ${unit} as tripped`, 'A unit the question is about.', [unitNamed(unit), 'trip'])),
+      ruled('absence', 'names an untripped unit as tripped', 'The others hold full power.', [String.raw`\bUnits? (?!(?:${fleet.tripped.map(unit => unit.split('-').at(-1)).join('|')})\b)\d+\b`, String.raw`\btripped\b`]),
+    ] },
+]).map(scenario => ({ ...scenario, set: 'multiunit' as const, flaky: false }))
 
 // ---- scenarios from a module outside the repository (the private hold-out) ----
 

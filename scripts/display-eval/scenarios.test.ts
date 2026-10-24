@@ -2,8 +2,9 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, fixturePath, KEY_STATUS, loadScenarioModule, NEAR_DUPLICATES, runRequests, smokeScenarios } from './scenarios.ts'
+import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, fixturePath, KEY_STATUS, loadScenarioModule, multiunitScenarios, NEAR_DUPLICATES, runRequests, smokeScenarios } from './scenarios.ts'
 import { keyNames } from './decisive.ts'
+import { worryVerdict } from './worry.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import p0 from './p0-requests.json'
 
@@ -98,5 +99,34 @@ describe('the parametric probe (plan §6, AG S1-4)', () => {
     expect((await external([{ ...bare, worry: { evidence: [key] } }]))[0]).toMatchObject({ set: 'worry', evidence: [{ patterns: ['overload'] }] })
     await expect(external([bare])).rejects.toThrow('holdout or a worry block')
     await expect(external([{ ...bare, worry: { evidence: [{ ...key, patterns: ['(unclosed'] }] } }])).rejects.toThrow('invalid pattern')
+  })
+})
+
+describe('the fork\'s multiunit scenarios (T7.1)', () => {
+  test('ask four fleet questions on the 4-unit complex and the 12-unit fixture, apart from the dev set', () => {
+    expect(multiunitScenarios.map(scenario => scenario.id)).toEqual([4, 12].flatMap(size => ['overview', 'furthest-pressurizer', 'sg-levels', 'tripped-safety-functions'].map(name => `fleet-${size}-${name}`)))
+    expect(new Set(multiunitScenarios.map(scenario => scenario.set))).toEqual(new Set(['multiunit']))
+    expect(allScenarios.some(scenario => scenario.set === 'multiunit')).toBe(false)
+    expect(fixturePath('fixture:halden-fleet-12')).not.toBeNull()
+  })
+
+  test('every signal name is a Plant signal or the set, and every faulted unit exists in its fleet', () => {
+    for (const scenario of multiunitScenarios) {
+      const size = scenario.run.scenario === 'halden-power-complex' ? 4 : 12
+      for (const key of scenario.evidence.filter(entry => entry.kind === 'signal')) {
+        for (const name of keyNames(key, catalog)) expect(catalog.signal(name) !== undefined || name === 'of:process-plant/process-plants' || /^plant:halden-\d+$/.test(name)).toBe(true)
+      }
+      for (const step of scenario.run.setup) expect(Number(/^plant:halden-(\d+)$/.exec(String(step.input.plantId))![1])).toBeLessThanOrEqual(size)
+    }
+  })
+
+  test('the claim rules name the right unit and catch an untripped unit called tripped', () => {
+    const of = (id: string) => multiunitScenarios.find(scenario => scenario.id === id)!.evidence
+    const overview = 'Halden Units 1, 3 and 4 are in power operation with no alarms. Unit 2 is the outlier: it has a reactor trip on turbine trip.'
+    expect(worryVerdict(of('fleet-4-overview'), overview).pass).toBe(true)
+    expect(worryVerdict(of('fleet-12-overview'), overview).pass).toBe(false)
+    expect(worryVerdict(of('fleet-12-tripped-safety-functions'), 'Units 3 and 10 tripped; their safety functions are satisfied.').pass).toBe(true)
+    expect(worryVerdict(of('fleet-12-tripped-safety-functions'), 'Units 3 and 10 tripped. Unit 1 tripped too.').pass).toBe(false)
+    expect(worryVerdict(of('fleet-12-tripped-safety-functions'), 'Units 3 and 10 tripped. Unit 1 is not tripped.').pass).toBe(true)
   })
 })

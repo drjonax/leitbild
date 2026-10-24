@@ -77,11 +77,13 @@ export const vignetteEvidenceOf = (record: ComposeRecord, view?: { readonly sect
   const topologies = (view?.sections ?? []).filter(section => section?.kind === 'topology')
   const bound = topologies.flatMap(section => [...(section.nodes ?? []), ...(section.edges ?? [])].flatMap((entry: any) => (entry.bindings ?? []).flatMap((binding: any) => typeof binding.ref === 'string' ? [binding.ref as string] : [])))
   const drawn = new Set<string>(topologies.flatMap(section => (section.nodes ?? []).flatMap((node: any) => typeof node.element === 'string' ? [node.element as string] : [])))
-  const refs = new Set<string>([...views.flatMap(view => (view.refs ?? []) as ReadonlyArray<string>), ...items.flatMap(item => typeof item.subject?.ref === 'string' ? [item.subject.ref as string] : []), ...bound])
+  // A view of a set names each quantity once ({ ref, label }), matched on every member.
+  const setSignals = views.flatMap(view => view.of !== undefined && Array.isArray(view.signals) ? view.signals.flatMap((entry: any) => typeof entry?.ref === 'string' ? [entry.ref as string] : []) : [])
+  const refs = new Set<string>([...views.flatMap(view => (view.refs ?? []) as ReadonlyArray<string>), ...setSignals, ...items.flatMap(item => typeof item.subject?.ref === 'string' ? [item.subject.ref as string] : []), ...bound])
   const objects = new Set<string>([
     ...views.flatMap(view => [...(Array.isArray(view.objectIds) ? view.objectIds : []), ...(typeof view.objectId === 'string' ? [view.objectId] : []), ...(typeof view.around === 'string' ? [view.around] : [])] as ReadonlyArray<string>),
     ...items.flatMap(item => typeof item.subject?.objectId === 'string' ? [item.subject.objectId as string] : []),
-    ...[...refs].map(ref => ref.split('#')[0]!),
+    ...[...refs].flatMap(ref => ref.includes('#') ? [ref.split('#')[0]!] : []),
     // A live collection is named by its Pack and category ("of:ambulance/incidents").
     ...views.flatMap(view => view.of !== undefined ? [`of:${view.of.packId}/${view.of.categoryId}`] : []),
   ])

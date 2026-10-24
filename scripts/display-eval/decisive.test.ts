@@ -80,3 +80,17 @@ describe('decisive evidence: semantic and mimic-aware', () => {
     expect(addedEvidenceUse(display, 'Level falls by 10.35 %.')).toEqual([{ kind: 'cause', path, cited: false }])
   })
 })
+
+describe('a vignette over a set of units (fork, multiunit T7.1)', () => {
+  const compare = vignetteEvidenceOf({
+    input: { subjects: [], views: [{ kind: 'compare', of: { category: 'process-plants', group: 'halden-power-complex' }, signals: ['Pressurizer pressure'] }] },
+    result: { success: true, viewRef: 'call_1_0/v1', data: { view: { state: JSON.stringify({ views: [{ kind: 'compare', of: { packId: 'process-plant', categoryId: 'process-plants', group: 'halden-power-complex' }, signals: [{ ref: 'pressurizer.pressureMPa', label: 'Pressurizer pressure' }], rows: 13 }] }) }, card: { items: [] } } },
+  })
+
+  test('carries each compared quantity on every member and the set itself', () => {
+    expect(scoreKey(key('pressurizer pressure', ['PT-455']), compare, '', catalog)).toMatchObject({ hit: true })
+    expect(scoreKey(key('the set', ['of:process-plant/process-plants']), compare, '', catalog)).toMatchObject({ hit: true })
+    expect(scoreKey(key('SG A level', ['SG-A-LVL-NR']), compare, '', catalog).hit).toBe(false)
+    expect([...compare.objects!]).toEqual(['of:process-plant/process-plants'])
+  })
+})
