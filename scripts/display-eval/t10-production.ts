@@ -43,12 +43,12 @@ export const CITATION_CASES_E1: ReadonlyArray<CitationCase> = [
 /** Every frozen Run but the live situation monitor: plant, grid, weather and the entity-floor packs. */
 export const PRODUCTION_RUNS = FROZEN_SPECS.map(spec => spec.id).filter(id => id !== 'norway-situation-monitor')
 
-/** The operator-displays skill exactly as Agents injects it ("[name] description" and body, workspace-runtime.ts). */
+/** The display skills exactly as Agents injects them into the Assistant ("[name] description" and body, joined as
+ * workspace-runtime.ts joins them): operator-displays and the fork's multiunit-displays, which extends it. */
 export const injectedSkill = async (): Promise<string> => {
   const store = createSkillStore()
   await loadSkills(new URL('../../apps/agents/skills', import.meta.url).pathname, store, createToolRegistry())
-  const skill = store.get('operator-displays')!
-  return `[${skill.name}] ${skill.description}\n${skill.body}`
+  return ['operator-displays', 'multiunit-displays'].map(name => store.get(name)!).map(skill => `[${skill.name}] ${skill.description}\n${skill.body}`).join('\n\n---\n\n')
 }
 
 const COMPOSE = 'world.simulation-run.display.compose'

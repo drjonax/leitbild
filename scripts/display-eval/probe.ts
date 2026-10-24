@@ -28,7 +28,7 @@
  */
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { allScenarios, devScenarios, fixturePath, loadScenarioModule, runRequests, smokeScenarios, type EvalScenario, type ScenarioRun } from './scenarios.ts'
+import { allScenarios, devScenarios, fixturePath, loadScenarioModule, multiunitScenarios, runRequests, smokeScenarios, type EvalScenario, type ScenarioRun } from './scenarios.ts'
 import { vignetteEvidenceOf, scoreKey, addedEvidenceUse, answerProse, type ComposeRecord, type KeyResult } from './decisive.ts'
 import { correctionsIn, type Correction } from './corrections.ts'
 import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billing.ts'
@@ -37,13 +37,19 @@ import { operationChecks } from './operation-checks.ts'
 import { worryVerdict } from './worry.ts'
 import { callCostUsd, createSpendGuard, priceOf, runGuardUsd } from '../fork/openai-spend.ts'
 
-const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
+const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|multiunit|all] [--scenarios=<abs module>#<export>] [--agent-model=<model>@<effort>] [--repeat=<k>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
 const [stage, directory, ...rest] = Bun.argv.slice(2)
 if (!stage || !/^[a-z0-9-]+$/.test(stage) || !directory || !isAbsolute(directory)) throw new Error(usage)
 const option = (name: string): string | undefined => rest.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3)
 const agentsLog = option('agents-log')
 if (agentsLog === undefined || !isAbsolute(agentsLog) || !await Bun.file(agentsLog).exists()) throw new Error(`--agents-log must name the local stack's agents.log. ${usage}`)
-const pinnedModel = option('model') ?? 'openai/gpt-6-sol'
+// Fork: --agent-model=<model>@<effort> sets each scenario's Assistant before it is asked (the sol reference run, plan §6).
+const agentModel = option('agent-model') === undefined ? null : (() => {
+  const match = /^([a-z0-9.:/-]+)@([a-z]+)$/.exec(option('agent-model')!)
+  if (match === null) throw new Error(`--agent-model takes <model>@<effort>. ${usage}`)
+  return { model: match[1]!, reasoningEffort: match[2]! }
+})()
+const pinnedModel = option('model') ?? agentModel?.model ?? 'openai/gpt-6-sol'
 const pinnedUpstream = option('upstream') ?? 'OpenAI'
 // Fork: the run stops before a scenario whose worst case would pass the guard ($0.50 luna, $2.00 sol; plan §6).
 const spend = createSpendGuard(runGuardUsd([pinnedModel]), priceOf(pinnedModel).worstTurnUsd)
@@ -62,6 +68,7 @@ const pool: ReadonlyArray<EvalScenario> = external !== undefined
     if (set === 'all') return allScenarios
     if (set === 'smoke') return smokeScenarios
     if (set === 'near-duplicate') return allScenarios.filter(scenario => scenario.set === 'near-duplicate')
+    if (set === 'multiunit') return multiunitScenarios
     throw new Error(`Unknown --set ${set}. ${usage}`)
   })()
 const unknown = selected.filter(id => !pool.some(scenario => scenario.id === id))
@@ -401,7 +408,12 @@ const requestDisplay = async (roomId: string, roomPath: string, human: { id: str
 }
 
 const rows: Array<Record<string, unknown>> = []
-for (const scenario of chosen) {
+// Fork: --repeat=<k> asks every scenario k times in this one run, under its one guard (k=1 by default).
+const repeats = Number(option('repeat') ?? 1)
+if (!Number.isInteger(repeats) || repeats < 1) throw new Error(`--repeat takes a positive whole number. ${usage}`)
+const asked = Array.from({ length: repeats }, (_, round) => chosen.map(scenario => ({ round: round + 1, scenario }))).flat()
+for (const { round, scenario } of asked) {
+  const file = repeats === 1 ? `${stage}-${scenario.id}` : `${stage}-${scenario.id}-r${round}`
   if (!spend.allows()) { console.log(`Spend guard: stopping before ${scenario.id} with $${spend.spentUsd().toFixed(4)} of $${spend.budgetUsd} spent`); break }
   const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: await seedOf(scenario.run.scenario) })
   const resource = copy.createdResources?.find((entry: { type: string }) => entry.type === 'world.simulation-run') ?? copy.result?.resource
@@ -411,7 +423,7 @@ for (const scenario of chosen) {
   if (refused !== null) {
     const row = { id: scenario.id, set: scenario.set, flaky: scenario.flaky, expect: scenario.expect, answerType: 'setup-refused', setupError: refused, runId: resource.id }
     rows.push(row)
-    await save(`${stage}-${scenario.id}`, { scenario, row })
+    await save(file, { scenario, row })
     await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
     console.log(JSON.stringify({ id: scenario.id, setupRefused: refused }))
     continue
@@ -424,6 +436,7 @@ for (const scenario of chosen) {
   const members = await request(roomPath + '/members')
   const human = members.find((member: { kind: string }) => member.kind === 'human')
   const agent = members.find((member: { kind: string }) => member.kind === 'ai')
+  if (agentModel !== null) await request(`/api/workspaces/${workspaceId}/agents/agents/${encodeURIComponent(agent.name)}`, agentModel, 'PATCH')
   // The Room already holds the Assistant's join notice; only a new chat reply counts.
   const prior = new Set<string>((await request(roomPath + '?limit=100')).messages.map((message: { id: string }) => message.id))
   const offset = await logOffset(agentsLog)
@@ -455,6 +468,7 @@ for (const scenario of chosen) {
     : operationChecks(scenario.operation, answer.type === 'chat', answer.content, proposals, proposeAttemptsOf(operations), accepted, fence !== null, controls.items)
   const row = {
     id: scenario.id,
+    ...(repeats === 1 ? {} : { round }),
     set: scenario.set,
     flaky: scenario.flaky,
     expect: scenario.expect,
@@ -480,7 +494,8 @@ for (const scenario of chosen) {
     decisiveSignalHits: scoredSignals.filter(result => result.hit === true).length,
     decisivePass: scenario.expect !== 'display' || scoredSignals.length === 0 ? null : fence !== null && scoredSignals.every(result => result.hit === true),
     staleKeyNames: [...new Set(decisive.flatMap(result => result.unknown))],
-    ...(scenario.set === 'worry' ? { worry: answer.type === 'chat' ? worryVerdict(scenario.evidence, answer.content) : null } : {}),
+    // Fork: the multiunit set's claims ("names Unit 7 as furthest") are pre-registered rules of the same kind.
+    ...(scenario.set === 'worry' || scenario.set === 'multiunit' ? { worry: answer.type === 'chat' ? worryVerdict(scenario.evidence, answer.content) : null } : {}),
     addedEvidence: display === null ? [] : addedEvidenceUse(display, answer.content),
     prepareWallMs,
     wallMs,
@@ -508,13 +523,13 @@ for (const scenario of chosen) {
   }
   spend.add(costs.costUsd + (requested?.row.costUsd ?? 0))
   rows.push(fullRow)
-  await save(`${stage}-${scenario.id}`, {
+  await save(file, {
     scenario, row: fullRow, answer, interim, calls: answerCalls, composes: composes.map(outcome => outcome.record), cards, proposals,
     ...(operation === null ? {} : { operation, controls }),
     ...(requested === null ? {} : { requestedReply: requested.reply, requestedInterim: requested.interim, requestedCalls: requested.calls, requestedCards: requested.cards, requestedComposes: requested.composes }),
   })
   await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
-  console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, ...('worry' in fullRow ? { worry: fullRow.worry?.pass ?? null } : {}), modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
+  console.log(JSON.stringify({ id: fullRow.id, ...(repeats === 1 ? {} : { round }), displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, ...('worry' in fullRow ? { worry: fullRow.worry?.pass ?? null } : {}), modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
 }
 
 const { summariseRows } = await import('./report.ts')
