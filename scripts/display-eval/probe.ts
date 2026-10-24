@@ -35,6 +35,7 @@ import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billi
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { operationChecks } from './operation-checks.ts'
 import { worryVerdict } from './worry.ts'
+import { callCostUsd, createSpendGuard, priceOf, runGuardUsd } from '../fork/openai-spend.ts'
 
 const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
 const [stage, directory, ...rest] = Bun.argv.slice(2)
@@ -44,6 +45,8 @@ const agentsLog = option('agents-log')
 if (agentsLog === undefined || !isAbsolute(agentsLog) || !await Bun.file(agentsLog).exists()) throw new Error(`--agents-log must name the local stack's agents.log. ${usage}`)
 const pinnedModel = option('model') ?? 'openai/gpt-6-sol'
 const pinnedUpstream = option('upstream') ?? 'OpenAI'
+// Fork: the run stops before a scenario whose worst case would pass the guard ($0.50 luna, $2.00 sol; plan §6).
+const spend = createSpendGuard(runGuardUsd([pinnedModel]), priceOf(pinnedModel).worstTurnUsd)
 const requestDisplays = rest.includes('--request-display')
 const selected = rest.filter(argument => !argument.startsWith('--'))
 const external = option('scenarios')
@@ -335,7 +338,7 @@ const turnCosts = async (roomId: string, answer: any, calls: ReadonlyArray<Model
   }
   const pinViolations = [
     ...(answer.model === undefined || answer.model === pinnedModel ? [] : [`model ${answer.model}`]),
-    ...calls.filter(call => call.upstream !== pinnedUpstream).map(call => `upstream ${call.upstream ?? 'unreported'} (${call.source})`),
+    ...calls.filter(call => pinnedUpstream === 'direct' ? call.provider !== 'openai' : call.upstream !== pinnedUpstream).map(call => `upstream ${call.upstream ?? 'unreported'} (${call.source})`),
   ]
   return {
     model: answer.model ?? null,
@@ -347,7 +350,8 @@ const turnCosts = async (roomId: string, answer: any, calls: ReadonlyArray<Model
     completionTokens: answer.completionTokens ?? null,
     cacheRead: answer.cacheRead ?? null,
     cacheCreation: answer.cacheCreation ?? null,
-    costUsd: billing.costUsd,
+    // A direct OpenAI line carries tokens, no billed cost: priced from the fork's table.
+    costUsd: calls.reduce((sum, call) => sum + (call.costUsd ?? callCostUsd({ model: call.model, promptTokens: call.promptTokens ?? 0, cacheRead: call.cacheRead ?? 0, completionTokens: call.completionTokens ?? 0 })), 0),
     unbilledCalls: billing.unbilledCalls,
     upstreams: billing.upstreams,
     pinViolations,
@@ -398,6 +402,7 @@ const requestDisplay = async (roomId: string, roomPath: string, human: { id: str
 
 const rows: Array<Record<string, unknown>> = []
 for (const scenario of chosen) {
+  if (!spend.allows()) { console.log(`Spend guard: stopping before ${scenario.id} with $${spend.spentUsd().toFixed(4)} of $${spend.budgetUsd} spent`); break }
   const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: await seedOf(scenario.run.scenario) })
   const resource = copy.createdResources?.find((entry: { type: string }) => entry.type === 'world.simulation-run') ?? copy.result?.resource
   if (!resource) throw new Error('Copy did not return a Simulation Run reference')
@@ -501,6 +506,7 @@ for (const scenario of chosen) {
     ...row,
     requested: { ...requested.row, expected: scenario.requested ?? null, correct: scenario.requested === undefined ? null : requested.row.displayed === (scenario.requested === 'display') },
   }
+  spend.add(costs.costUsd + (requested?.row.costUsd ?? 0))
   rows.push(fullRow)
   await save(`${stage}-${scenario.id}`, {
     scenario, row: fullRow, answer, interim, calls: answerCalls, composes: composes.map(outcome => outcome.record), cards, proposals,
@@ -512,6 +518,6 @@ for (const scenario of chosen) {
 }
 
 const { summariseRows } = await import('./report.ts')
-const summary = { stage, origin, pinnedModel, pinnedUpstream, ...summariseRows(rows as never), rows }
+const summary = { stage, origin, pinnedModel, pinnedUpstream, spend: { budgetUsd: spend.budgetUsd, spentUsd: spend.spentUsd() }, ...summariseRows(rows as never), rows }
 await save(`${stage}-summary`, summary)
 console.log(JSON.stringify({ ...summary, rows: undefined }, null, 2))
