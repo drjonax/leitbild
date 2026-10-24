@@ -3,7 +3,9 @@
   import { simulationRunIdSchema } from '../../../core/model/index.ts'
   import { severityStyle, severityTable, type Palette } from '../../displays/severity.ts'
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
-  import { hostDisplayFrame } from '../view-host.ts'
+  import { hostDisplayFrame, openDetachedWith } from '../view-host.ts'
+  import { browserDisplayRelay, popOutListing } from '../display-relay.ts'
+  import { browserViewerLease, type ViewerLeasePhase } from '../pop-out.ts'
   import { worstChip } from './alerts.ts'
   import { clockText, provenanceMark, underTitle } from './format.ts'
   import { fillsFrame, VIGNETTE_ROW_PX } from './grid.ts'
@@ -20,7 +22,9 @@
   // Run is gone or not loaded, or its samples fail), with the Run's time, and
   // what it is: generated from the model or AI-composed, never an operating
   // display (provenanceMark), in the window, inline in chat and in a
-  // procedure tag's dialog alike.
+  // procedure tag's dialog alike. Popped out into a window of its own (a page
+  // of its own), it holds its own viewer lease on the Run (pop-out.ts) and
+  // offers to return to the display window.
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
 
   let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), bands: new Map(), sampleError: null })
@@ -33,18 +37,47 @@
   const fills = $derived(fillsFrame(envelope.state))
   /** This display, as an element's pop-over names it when it opens the element's default in the display window. */
   const from = $derived({ key: envelope.state, title: envelope.title })
+  const poppedOut = window.parent === window
+  let lease = $state.raw<ViewerLeasePhase | null>(null)
+  /** What the last relay could not do, said in place until the next try. */
+  let notice = $state<string | null>(null)
+  let relay: ReturnType<typeof browserDisplayRelay> | null = null
+
+  const returnToPanel = async (): Promise<void> => {
+    if (relay === null) return
+    notice = null
+    if (await relay('return', popOutListing(envelope))) window.close()
+    else notice = 'No Run page of this Run is open to take the display back'
+  }
+
   runOnMount(() => {
     const session = createVignetteSession({
       runId,
       state: envelope.state,
       routes: vignetteRoutes,
-      onChange: next => { snapshot = next },
+      onChange: next => {
+        snapshot = next
+        if (next.phase === 'inactive' || next.phase === 'missing') viewer?.runGone(next.phase === 'missing')
+      },
     })
+    const viewer = poppedOut ? browserViewerLease(runId) : null
+    relay = poppedOut ? browserDisplayRelay(envelope.subject.workspaceId) : null
+    const unlease = viewer?.subscribe(phase => {
+      lease = phase
+      // A lost lease stops the display: it never draws a Run it no longer holds.
+      if (phase.kind === 'lost' || phase.kind === 'closed') session.close()
+    })
+    const opener = relay
+    const undetach = opener === null ? undefined : openDetachedWith(listing => {
+      notice = null
+      void opener('open', listing).then(taken => { if (!taken) notice = 'No Run page of this Run is open to show that display' })
+    })
+    if (poppedOut) document.title = envelope.title
     const unhost = hostDisplayFrame({
       kind: fills ? 'generated' : 'advice',
       card: document.querySelector<HTMLElement>('article.vignette'),
       drawing: () => (snapshot.phase === 'connecting' ? undefined : snapshot.view ?? snapshot),
-      setVisible: visible => session.setVisible(visible),
+      setVisible: visible => { session.setVisible(visible); viewer?.setVisible(visible) },
       presented: () => {},
     })
     session.start()
@@ -53,13 +86,14 @@
     // The embedding page's theme choice changes the palette live (main.ts).
     const theme = new MutationObserver(() => { palette = readPalette() })
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-obc-theme'] })
-    return () => { clearInterval(tick); theme.disconnect(); unhost(); session.close() }
+    return () => { clearInterval(tick); theme.disconnect(); unhost(); session.close(); unlease?.(); viewer?.stop(); undetach?.() }
   })
 
   const view = $derived(snapshot.view)
   const latest = $derived(snapshot.latest)
   const worst = $derived(latest === undefined ? null : worstChip(latest.observations, latest.alerts))
   const footer = $derived.by((): { readonly word: 'LIVE' | 'PAUSED' | 'FROZEN'; readonly why?: string } => {
+    if (lease?.kind === 'lost' || lease?.kind === 'closed') return { word: 'FROZEN', why: lease.reason }
     const stale = sampleStale(snapshot, wallNow)
     if (snapshot.phase === 'live' && !stale) return { word: latest?.at.paused === true ? 'PAUSED' : 'LIVE' }
     const why = snapshot.sampleError ?? (stale ? 'no answer from the Run for over 5 s' : snapshot.phase === 'inactive' ? 'the Run is not loaded' : snapshot.phase === 'missing' ? 'the Run no longer exists' : undefined)
@@ -68,6 +102,14 @@
 </script>
 
 <article class="vignette" class:fills style:--row={`${VIGNETTE_ROW_PX}px`} aria-label={view?.title ?? envelope.title}>
+  {#if poppedOut}
+    <!-- A window of its own: the way back to the panel, with what it could not do. OpenBridge's button takes two rows. -->
+    <div class="window-bar">
+      <span class="notice" role="status">{notice ?? ''}</span>
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <obc-button variant="normal" title="Show this display in the display window of its Run page and close this window" onclick={() => { void returnToPanel() }}>Return to panel</obc-button>
+    </div>
+  {/if}
   <header>
     <h1 title={view?.title ?? envelope.title}>{view?.title ?? envelope.title}</h1>
     {#if view?.by === 'assistant'}<span class="ai" title="Composed by the Assistant from what the Run declares"><obi-ai></obi-ai>Assistant</span>{/if}
@@ -85,7 +127,9 @@
     </div>
   {/if}
 
-  {#if view === undefined}
+  {#if lease?.kind === 'closed'}
+    <p class="closed" role="alert">This window is closed: {lease.reason}. It shows no values. Reload it to attach again while the Run is loaded, or return to the panel.</p>
+  {:else if view === undefined}
     <p class="status">
       {#if snapshot.phase === 'missing'}This Run no longer exists.
       {:else if snapshot.phase === 'inactive'}The Run is not loaded; this display starts when it is.
@@ -117,8 +161,12 @@
   .chip.alarm { background: var(--display-alarm-fill); color: var(--display-on-alarm); border-color: var(--alert-alarm-color); }
   .chip.critical { background: var(--display-critical-fill); color: var(--display-on-critical); border-color: var(--alert-critical-color); }
   .vignette.fills { display: flex; flex-direction: column; height: 100vh; }
-  .fills > header, .fills > footer, .fills > .chips { flex: none; }
+  .fills > header, .fills > footer, .fills > .chips, .fills > .window-bar { flex: none; }
   .status { margin: 0; padding: 4px 0; color: var(--element-neutral-color); }
+  .window-bar { display: flex; align-items: center; gap: 8px; height: calc(2 * var(--row)); }
+  .window-bar obc-button { flex: none; }
+  .notice { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--element-neutral-color); }
+  .closed { flex: 1 1 auto; margin: 0; padding: 8px 0; color: var(--element-active-color); }
   footer { font-size: 12px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; }
   .clock { font-weight: 700; letter-spacing: 0.04em; color: var(--element-active-color); }
   .clock.frozen { color: var(--element-neutral-color); }

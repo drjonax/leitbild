@@ -1,11 +1,14 @@
 // The display chip that stands in place of a ```leitbild-view fence in a posted
 // answer. Its main button opens the display in the Workspace's one process
 // display window; its Inline button shows the same live display in the answer
-// too, below the chip, until the reader hides it. A vignette's chip shows its
+// too, below the chip, until the reader hides it; its Pop out button opens it
+// in a browser window of its own (World's embed route, which holds the Run
+// loaded while it is visible). A vignette's chip shows its
 // frozen card, the lines the answer cites, and each ⟦k⟧ in the answer becomes
 // a chip linked to its line. Neutral and accent colours only; a refusal is not
 // a process alarm.
 import type { EmbeddedViewListing } from '@leitbild/contracts'
+import { EMBEDDED_VIEW_WINDOW_FEATURES, embeddedViewFragment, embeddedViewPath, embeddedViewWindowName } from '@leitbild/contracts/embedded-view-route'
 import { icon, type IconName } from '../icon.ts'
 import { hideInline, showInline } from './inline.ts'
 import { frozenCardText, itemOf, type frozenCard, type TurnCardsRead } from './cards.ts'
@@ -153,10 +156,29 @@ const inlineButton = (host: HTMLElement, listing: EmbeddedViewListing, actions: 
   return button
 }
 
+const popOutButton = (listing: EmbeddedViewListing): HTMLButtonElement => {
+  const envelope = listing.envelope
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = SIDE_BUTTON
+  button.setAttribute('aria-label', `Pop out the live display into a window of its own: ${envelope.title}`)
+  button.title = 'Pop out into a window of its own'
+  const glyph = icon('external-link', { size: 14 })
+  glyph.setAttribute('aria-hidden', 'true')
+  button.append(glyph, 'Pop out')
+  button.onclick = event => {
+    event.stopPropagation()
+    // From the click, so pop-up blockers allow it.
+    const opened = window.open(embeddedViewPath(envelope) + embeddedViewFragment(envelope), embeddedViewWindowName(envelope), EMBEDDED_VIEW_WINDOW_FEATURES)
+    button.title = opened === null ? 'The browser blocked the new window; allow pop-ups for Leitbild' : 'Pop out into a window of its own'
+  }
+  return button
+}
+
 const offerRow = (host: HTMLElement, listing: EmbeddedViewListing, main: HTMLElement, actions: ChipActions): HTMLElement => {
   const row = document.createElement('div')
   row.className = ROW
-  row.append(main, inlineButton(host, listing, actions))
+  row.append(main, inlineButton(host, listing, actions), popOutButton(listing))
   chipListings.set(host, listing)
   // An answer rendered again shows inline what the reader showed inline before.
   if (actions.inlineShown(listing.key) && inlineSlots.get(host)?.parentElement !== host) applyInline(host, listing, true)

@@ -484,9 +484,15 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
           const simulationRunIdResult = simulationRunIdSchema.safeParse(rawSimulationRunId)
           if (!simulationRunIdResult.success) return secure(new Response('Invalid Simulation Run id', { status: 400 }))
           const simulationRunId = simulationRunIdResult.data
-          let runtime
+          // A viewer that must never load a Run (a pop-out display) attaches only to one that is loaded.
+          const attach = url.searchParams.get('attach')
+          if (attach !== null && attach !== 'loaded') return secure(apiError(400, 'invalid_request', 'attach must be "loaded"'))
+          let runtime = attach === 'loaded' ? workspaceRuntime.simulationRuns.get(simulationRunId) : undefined
+          if (attach === 'loaded' && runtime === undefined) {
+            return secure(apiError(409, 'simulation_run_not_loaded', 'The Run is not loaded; this viewer does not load it'))
+          }
           try {
-            runtime = await workspaceRuntime.simulationRuns.load(simulationRunId)
+            runtime ??= await workspaceRuntime.simulationRuns.load(simulationRunId)
           } catch (err) {
             if ((err as Error).message.startsWith('Simulation Run not found:')) {
               return secure(new Response('Simulation Run not found', { status: 404 }))

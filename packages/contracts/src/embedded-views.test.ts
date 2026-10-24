@@ -9,6 +9,7 @@ import {
   embeddedViewSubjectOpenMessageSchema,
   embeddedViewsMessageSchema,
   embeddedViewWindowMaximiseMessageSchema,
+  embeddedViewWindowName,
   EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,
 } from './embedded-views.ts'
@@ -27,6 +28,13 @@ describe('embedded view envelope', () => {
   test('builds a same-origin route from validated identities only', () => {
     const parsed = embeddedViewEnvelopeSchema.parse(envelope)
     expect(embeddedViewPath(parsed)).toBe(`/workspaces/${workspaceId}/world/embed/process-plant.display`)
+  })
+
+  test('pops out into one browser window per view, whoever opens it', () => {
+    const parsed = embeddedViewEnvelopeSchema.parse(envelope)
+    expect(embeddedViewWindowName(parsed)).toMatch(/^leitbild-view-[0-9a-f]{8}$/)
+    expect(embeddedViewWindowName(embeddedViewEnvelopeSchema.parse({ ...envelope }))).toBe(embeddedViewWindowName(parsed))
+    expect(embeddedViewWindowName(embeddedViewEnvelopeSchema.parse({ ...envelope, state: '{"composition":{"x":1}}' }))).not.toBe(embeddedViewWindowName(parsed))
   })
 
   test('round-trips through the URL fragment', () => {

@@ -735,8 +735,9 @@ export const createSimulationRunRegistry = (config: {
     return maximumPaceAvailabilityFor(manifest.runtimes)
   }
 
-  const executionStatus = async (id: SimulationRunId): Promise<RunExecutionState> => {
-    const runtime = await load(id)
+  const executionStatus = async (id: SimulationRunId): Promise<RunExecutionState> => await executionStateOf(id, await load(id))
+
+  const executionStateOf = async (id: SimulationRunId, runtime: SimulationRunRuntime): Promise<RunExecutionState> => {
     const clock = runtime.snapshot().clock
     if (!clock) throw new Error('Simulation Run clock is not initialized')
     const cached = executionStates.get(id) ?? await executionStoreFor(id).load()
@@ -757,8 +758,11 @@ export const createSimulationRunRegistry = (config: {
     return state
   }
 
+  // A read for presence: a loaded Run is read as it is, not loaded again, so
+  // asking never counts as use that defers its idle close.
   const executionOverview = async (id: SimulationRunId): Promise<RunExecutionState> => {
-    if (simulationRuns.has(id)) return await executionStatus(id)
+    const loaded = simulationRuns.get(id)
+    if (loaded) return await executionStateOf(id, loaded)
     const summary = await summaryFor(id)
     if (!summary.clock) throw new Error(`Simulation Run clock is unavailable: ${id}`)
     const cached = executionStates.get(id) ?? await executionStoreFor(id).load()
