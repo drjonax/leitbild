@@ -267,6 +267,8 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
       ...(seen.length > 0 ? [alertsView(seen)] : []),
     ]
   }
+  // A Pack-declared group is a set of like units: its default is the fleet, every member worst first under its counts.
+  if (subject.of.group !== undefined) return [{ kind: 'fleet', of: subject.of }]
   const members = run.objects.filter(object => !run.denied.has(object.id) && object.packId === subject.of.packId && presentedOf(run, object)?.categoryId === subject.of.categoryId
     && (subject.of.closed || (object.lifecycle !== 'resolved' && object.lifecycle !== 'removed'))).map(object => object.id)
   return [
