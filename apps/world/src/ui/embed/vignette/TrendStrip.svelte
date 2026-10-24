@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { Observation } from '../../../core/observation/model.ts'
-  import type { VignetteValue } from '../../../features/displays/compose/model.ts'
+  import { numberText, unitSymbol, type Observation } from '../../../core/observation/model.ts'
+  import type { BandPoint, SetBand, VignetteValue } from '../../../features/displays/compose/model.ts'
   import { underTitle } from './format.ts'
   import { valueLook } from './readout.ts'
   import { BEYOND_BOTTOM_INSET, BEYOND_TOP_Y, stripDrawing, type DrawnSeries } from './trend.ts'
@@ -9,8 +9,9 @@
   // window for the hold served with their record, told apart by dash; the
   // time before the record starts hatched; the limits all of them share;
   // beside it a legend row per pen with its value now. The last strip of a
-  // trend carries the time axis on the row below it.
-  let { pens, title, series, observations, now, horizonMs, rows, axis }: {
+  // trend carries the time axis on the row below it. A set's strip draws its
+  // band under its pens, its legend row giving the band's span now.
+  let { pens, title, series, observations, now, horizonMs, rows, axis, band }: {
     pens: ReadonlyArray<VignetteValue>
     /** The vignette's title: a pen's name drops the object it names. */
     title: string
@@ -21,15 +22,23 @@
     /** The plot's rows (at least one per pen); the axis takes one more. */
     rows: number
     axis: boolean
+    /** A set's band: its points, how many units it spans and its span now. */
+    band?: { readonly points: ReadonlyArray<BandPoint>; readonly now: SetBand } | undefined
   } = $props()
 
   const id = $props.id()
   const hatch = `unrecorded-${id}`
   let width = $state(0)
   let height = $state(0)
-  const drawing = $derived(width > 0 && height > 0 && Number.isFinite(now) ? stripDrawing({ pens, series, observations, now, horizonMs, width, height }) : null)
+  const drawing = $derived(width > 0 && height > 0 && Number.isFinite(now) ? stripDrawing({ pens, series, observations, now, horizonMs, width, height, ...(band === undefined ? {} : { band: band.points }) }) : null)
   // A narrow plot names every second or third time, always "now", so no two names touch.
   const AXIS_LABEL_PX = 56
+  const span = $derived.by(() => {
+    if (band === undefined || pens[0] === undefined) return ''
+    const { unit, quantity, decades } = pens[0]
+    const text = (value: number): string => numberText(value, unit, quantity, decades === true)
+    return `${text(band.now.min)}–${text(band.now.max)}${unitSymbol(unit) === '' ? '' : ` ${unitSymbol(unit)}`}`
+  })
   const times = $derived.by(() => {
     const ticks = drawing?.times ?? []
     const every = Math.max(1, Math.ceil(AXIS_LABEL_PX / (width / Math.max(1, ticks.length - 1))))
@@ -54,6 +63,7 @@
         {#each drawing.values as tick (tick.label)}<text class="tick" x="2" y={tick.y - 2}>{tick.label}</text>{/each}
         {#each drawing.limits as limit (limit.id)}{#if limit.labelY !== null}<text class="tick" x={width - 2} y={limit.labelY} text-anchor="end">{limit.label}</text>{/if}{/each}
         {#each drawing.beyond as limit (limit.id)}<text class="tick" x={width - 2} y={limit.edge === 'top' ? BEYOND_TOP_Y : height - BEYOND_BOTTOM_INSET} text-anchor="end">{limit.edge === 'top' ? '▲' : '▼'} {limit.label}</text>{/each}
+        {#if drawing.band !== null}<path class="band" d={drawing.band.area} /><path class="band-median" d={drawing.band.median} />{/if}
         {#each drawing.pens as pen (pen.ref)}<path class={`pen ${pen.tone ?? ''}`} d={pen.path} stroke-dasharray={pen.dash === '' ? undefined : pen.dash} />{/each}
       </svg>
     {/if}
@@ -67,6 +77,13 @@
         <span class={`now ${look.tone ?? ''}`}>{look.text}{look.unit === '' ? '' : ` ${look.unit}`}</span>
       </li>
     {/each}
+    {#if band !== undefined}
+      <li title={`Min ${band.now.minAt}, max ${band.now.maxAt}`}>
+        <svg class="band-key" width="20" height="8" aria-hidden="true"><rect class="band" x="0" y="0" width="20" height="8" /><line class="band-median" x1="0" x2="20" y1="4" y2="4" /></svg>
+        <span class="name">{band.now.count} units, median line</span>
+        <span class="now">{span}</span>
+      </li>
+    {/if}
   </ul>
   {#if axis}
     <div class="axis">{#each times as tick (tick.label)}<span style:left={`${tick.x}px`} style:transform={tick.x < AXIS_LABEL_PX / 2 ? 'none' : tick.x > width - AXIS_LABEL_PX / 2 ? 'translateX(-100%)' : 'translateX(-50%)'}>{tick.label}</span>{/each}</div>
@@ -92,6 +109,9 @@
   .pen.warning { stroke: var(--alert-warning-color); stroke-width: 2; }
   .pen.alarm { stroke: var(--alert-alarm-color); stroke-width: 2; }
   .pen.critical { stroke: var(--alert-critical-color); stroke-width: 2; }
+  /* A band is the span of values, not a reading: the pens' hue, faint, its median a thin neutral line. */
+  .band { fill: var(--element-active-color); fill-opacity: 0.18; stroke: none; }
+  .band-median { fill: none; stroke: var(--element-neutral-color); stroke-width: 1; }
   .legend { list-style: none; margin: 0; padding: 0; }
   .legend li { display: flex; align-items: center; gap: 6px; height: var(--row); min-width: 0; white-space: nowrap; }
   .legend svg { flex: none; }

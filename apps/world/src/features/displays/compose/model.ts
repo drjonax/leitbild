@@ -199,8 +199,10 @@ export interface VignetteSample {
 
 /** A fleet column as a Pack declares it; `tally`: the aggregate header counts members by this word column. */
 export interface FleetColumn { readonly key: string; readonly label: string; readonly unit: string; readonly tally?: true }
-/** A quantity matched on each member: its words and how its numbers are written (no quantity where no member declares it now). */
-export interface SetColumn { readonly label: string; readonly unit: string; readonly quantity?: Observable['quantity']; readonly decades?: true }
+/** A quantity matched on each member: its words, and its declaration on the first member that declares it now (none where no member does). */
+export interface SetColumn { readonly label: string; readonly unit: string; readonly observable?: SetObservable }
+/** What one model declares alike on each unit: how a reading is written and judged, and how often it is recorded. */
+export type SetObservable = Pick<Observable, 'quantity' | 'unit' | 'valueType' | 'states' | 'thresholds' | 'decades'> & { readonly intervalMs?: number }
 /** A member's worst alert: its priority and message (the alerts section ranks the rest). */
 export interface MemberAlert { readonly priority: Priority | null; readonly message: string }
 export interface FleetRow {

@@ -4,9 +4,10 @@
 // so missing data shows; the time before the record starts is hatched. A
 // strip names a limit only where every pen on it declares that threshold at
 // one value; pens are told apart by dash, never by hue (colour is kept for
-// alerts).
+// alerts). A set's strip adds its band, the span of every unit's value from
+// min to max with the median through it, each held until the next point.
 import { decimalsFor, numberText, type Observable, type Observation } from '../../../core/observation/model.ts'
-import type { RecordedSeries, SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
+import type { BandPoint, RecordedSeries, SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
 import { orderWord, toneOf, type AlertTone } from './readout.ts'
 
 type Threshold = Observable['thresholds'][number]
@@ -51,6 +52,23 @@ export const appendPoint = (points: ReadonlyArray<SeriesPoint>, point: SeriesPoi
   const kept = [...points.filter(existing => existing.t < point.t), point]
   const first = kept.findIndex(existing => existing.t >= windowStart)
   return first <= 0 ? kept : kept.slice(first - 1)
+}
+
+/**
+ * A band over a window: the area from its min to its max, each point held until the next (the last until the window's
+ * end), and its median as a step line; null where no point holds into the window.
+ */
+export const bandPaths = (points: ReadonlyArray<BandPoint>, x: (t: number) => number, y: (v: number) => number, window: Window): { readonly area: string; readonly median: string } | null => {
+  const spans = points.flatMap((point, index) => {
+    const end = Math.min(points[index + 1]?.t ?? window.end, window.end)
+    return point.t > window.end || end < window.start ? [] : [{ point, start: Math.max(point.t, window.start), end }]
+  })
+  if (spans.length === 0) return null
+  const at = (t: number, v: number): string => `${x(t).toFixed(1)} ${y(v).toFixed(1)}`
+  const upper = spans.flatMap(({ point, start, end }) => [at(start, point.max), at(end, point.max)])
+  const lower = [...spans].reverse().flatMap(({ point, start, end }) => [at(end, point.min), at(start, point.min)])
+  const median = spans.flatMap(({ point, start, end }, index) => [`${index === 0 ? 'M' : 'L'}${at(start, point.median)}`, `L${at(end, point.median)}`])
+  return { area: `M${[...upper, ...lower].join(' L')} Z`, median: median.join(' ') }
 }
 
 /** Thresholds every pen of a strip declares under one id at one value and direction: the only limits the strip draws. */
@@ -129,6 +147,8 @@ export interface StripDrawing {
   readonly times: ReadonlyArray<{ readonly x: number; readonly label: string }>
   /** The window's time before any pen's record starts, from its left edge: hatched, "no record yet"; null where a record reaches its start. */
   readonly unrecorded: { readonly width: number } | null
+  /** A set's band, where its strip has one. */
+  readonly band: { readonly area: string; readonly median: string } | null
 }
 
 // The plot keeps its lines this far from its top and bottom edges.
@@ -168,6 +188,8 @@ export const stripDrawing = (input: {
   readonly horizonMs: number
   readonly width: number
   readonly height: number
+  /** A set's band from its history and its samples since, Run time ascending. */
+  readonly band?: ReadonlyArray<BandPoint>
 }): StripDrawing | null => {
   const window = { start: input.now - input.horizonMs, end: input.now }
   // What each pen draws: every point whose value holds into the window.
@@ -175,9 +197,10 @@ export const stripDrawing = (input: {
     const recorded = input.series.get(pen.ref)
     return recorded === undefined ? [] : recorded.points.filter((point, index, points) => point.t <= window.end && heldUntil(points, index, window.end, recorded.holdMs, recorded.silentFrom) >= window.start)
   })
-  const shown = held.flat().map(point => point.v)
-  if (shown.length === 0) return null
-  const recordStart = Math.max(window.start, Math.min(...held.flatMap(points => (points.length === 0 ? [] : [points[0]!.t]))))
+  const banded = (input.band ?? []).filter((point, index, points) => point.t <= window.end && (points[index + 1]?.t ?? window.end) >= window.start)
+  const shown = [...held.flat().map(point => point.v), ...banded.flatMap(point => [point.min, point.max])]
+  if (shown.length === 0 || input.pens.length === 0) return null
+  const recordStart = Math.max(window.start, Math.min(...held.flatMap(points => (points.length === 0 ? [] : [points[0]!.t])), ...banded.slice(0, 1).map(point => point.t)))
   const { unit, quantity, decades } = input.pens[0]!
   const seen = { min: Math.min(...shown), max: Math.max(...shown) }
   const limits = sharedLimits(input.pens)
@@ -208,5 +231,6 @@ export const stripDrawing = (input: {
     values: valueTicks(domain).map(tick => ({ y: y(tick.value), label: tick.label })),
     times: timeTicks(input.now, input.horizonMs).map(tick => ({ x: x(tick.t), label: tick.label })),
     unrecorded: recordStart > window.start ? { width: x(recordStart) } : null,
+    band: input.band === undefined ? null : bandPaths(input.band, x, y, window),
   }
 }

@@ -23,7 +23,7 @@
   // procedure tag's dialog alike.
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
 
-  let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), sampleError: null })
+  let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), bands: new Map(), sampleError: null })
   const readPalette = (): Palette => (document.documentElement.dataset.obcTheme as Palette | undefined) ?? 'day'
   let palette = $state<Palette>(readPalette())
   let wallNow = $state(Date.now())

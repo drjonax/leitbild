@@ -9,7 +9,7 @@
 // about again until someone loads it.
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
-import type { VignetteSample, VignetteView } from '../../../features/displays/compose/model.ts'
+import type { BandPoint, VignetteSample, VignetteView } from '../../../features/displays/compose/model.ts'
 import { appendPoint, type DrawnSeries } from './trend.ts'
 
 export interface RunPresence {
@@ -34,6 +34,8 @@ export interface VignetteSnapshot {
   readonly latest?: VignetteSample
   /** Each trend pen's record by ref, within its trend's horizon, with the hold the Historian served it with. */
   readonly series: ReadonlyMap<string, DrawnSeries>
+  /** Each banded strip of a set trend, by "<section>:<strip>": its band from the history World served and each sample since. */
+  readonly bands: ReadonlyMap<string, ReadonlyArray<BandPoint>>
   /** The last sample's failure; null once one succeeds again. */
   readonly sampleError: string | null
   /** Wall time of the last sample answered. */
@@ -83,6 +85,9 @@ export const viewWithLeads = (view: VignetteView, sample: VignetteSample): Vigne
 const pensOf = (view: VignetteView): ReadonlyArray<{ readonly ref: string; readonly seriesId: string; readonly horizonMs: number }> =>
   view.sections.flatMap(section => section.kind !== 'trend' ? [] : section.strips.flat().flatMap(pen =>
     pen.series === null ? [] : [{ ref: pen.ref, seriesId: pen.series.seriesId, horizonMs: section.horizonMs }]))
+/** Every set trend with its horizon, by section index: its pens and bands come with each sample. */
+const setTrendsOf = (view: VignetteView): ReadonlyArray<{ readonly index: number; readonly horizonMs: number }> =>
+  view.sections.flatMap((section, index) => section.kind === 'set-trend' ? [{ index, horizonMs: section.horizonMs }] : [])
 
 export const createVignetteSession = (config: {
   readonly runId: SimulationRunId
@@ -94,7 +99,7 @@ export const createVignetteSession = (config: {
 }) => {
   const schedule = config.schedule ?? realTimer
   const wallNow = config.wallNow ?? (() => Date.now())
-  let snapshot: VignetteSnapshot = { phase: 'connecting', series: new Map(), sampleError: null }
+  let snapshot: VignetteSnapshot = { phase: 'connecting', series: new Map(), bands: new Map(), sampleError: null }
   let closed = false
   let visible = true
   let cancel: (() => void) | null = null
@@ -126,18 +131,36 @@ export const createVignetteSession = (config: {
   const absorb = (view: VignetteView, sample: VignetteSample, withHistory: boolean): void => {
     const at = Date.parse(sample.at.at)
     const series = new Map(withHistory ? [] : snapshot.series)
-    for (const pen of pensOf(view)) {
-      // A pen whose record was not served draws nothing: its hold comes with its record, never guessed.
+    const bands = new Map(withHistory ? [] : snapshot.bands)
+    /** Whether the pen drew: a pen whose record was not served draws nothing, its hold comes with its record, never guessed. */
+    const extend = (pen: { readonly ref: string; readonly seriesId: string; readonly horizonMs: number }): boolean => {
       const recorded: DrawnSeries | undefined = withHistory ? sample.series?.[pen.seriesId] : series.get(pen.ref)
-      if (recorded === undefined) continue
+      if (recorded === undefined) return false
       // A reading that is bad or outside its declared validity measures nothing: no point, and the trace breaks there,
       // its last value held no further than this sample, until it measures again.
       const observation = sample.observations.find(entry => entry.ref === pen.ref)
       const value = observation?.quality === 'bad' || observation?.quality === 'not-applicable' ? undefined : observation?.value
       series.set(pen.ref, typeof value === 'number' ? { holdMs: recorded.holdMs, points: appendPoint(recorded.points, { t: at, v: value }, at - pen.horizonMs) }
         : { ...recorded, silentFrom: recorded.silentFrom ?? at })
+      return true
     }
-    update({ phase: 'live', view: viewWithLeads(view, sample), latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
+    for (const pen of pensOf(view)) extend(pen)
+    // A set trend names its pens each sample: one named since the last history read asks for its record on the next.
+    let unrecorded = false
+    for (const { index, horizonMs } of setTrendsOf(view)) {
+      const set = sample.sets?.[index]
+      if (set?.kind !== 'set-trend') continue
+      set.strips.forEach((strip, stripIndex) => {
+        for (const pen of strip.pens) if (!extend({ ...pen, horizonMs })) unrecorded = true
+        const key = `${index}:${stripIndex}`
+        if (strip.band === null) { bands.delete(key); return }
+        const before = (withHistory ? set.history?.[stripIndex] : bands.get(key)) ?? []
+        const { min, median, max } = strip.band
+        bands.set(key, [...before.filter((point, position) => point.t < at && (before[position + 1]?.t ?? at) >= at - horizonMs), { t: at, min, median, max }])
+      })
+    }
+    if (unrecorded && !withHistory) historyDue = true
+    update({ phase: 'live', view: viewWithLeads(view, sample), latest: sample, series, bands, sampleError: null, lastSampleWallMs: wallNow() })
   }
 
   const sampleOnce = async (view: VignetteView, known: RunPresence | undefined): Promise<void> => {
@@ -148,7 +171,7 @@ export const createVignetteSession = (config: {
       if (now === null) return
       presence = now
     }
-    const horizon = Math.max(0, ...pensOf(view).map(pen => pen.horizonMs))
+    const horizon = Math.max(0, ...pensOf(view).map(pen => pen.horizonMs), ...setTrendsOf(view).map(set => set.horizonMs))
     const withHistory = (historyDue || gap) && horizon > 0 && presence !== undefined
     const sample = await config.routes.sample(config.runId, config.state, withHistory ? { fromMs: Date.parse(presence!.at) - horizon } : undefined)
     if (closed) return
@@ -156,7 +179,7 @@ export const createVignetteSession = (config: {
     const reset = snapshot.latest !== undefined && Date.parse(sample.at.at) < Date.parse(snapshot.latest.at.at)
     samples += 1
     lastSampleWall = wallNow()
-    if (reset && !withHistory) { historyDue = true; update({ series: new Map() }); return }
+    if (reset && !withHistory) { historyDue = true; update({ series: new Map(), bands: new Map() }); return }
     historyDue = false
     absorb(view, sample, withHistory)
   }

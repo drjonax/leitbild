@@ -4,6 +4,7 @@ import { displayRunOf } from '../src/core/api/display-capabilities.ts'
 import type { ObjectId, OperationalObject } from '../src/core/model/index.ts'
 import type { Observation } from '../src/core/observation/model.ts'
 import { displaySpecSchema } from '../src/core/observation/spec.ts'
+import { fleetRowItem } from '../src/features/displays/compose/card.ts'
 import { composeVignette, type ComposeOutcome } from '../src/features/displays/compose/compose.ts'
 import type { SetSample, VignetteState } from '../src/features/displays/compose/model.ts'
 import { fitSet, sampleSet, SET_ROWS } from '../src/features/displays/compose/sets.ts'
@@ -205,6 +206,11 @@ describe('honesty after a trip', () => {
     expect(set.tallies.find(tally => tally.column === 'trip')).toEqual({ column: 'trip', word: 'Tripped', count: 1, labels: ['Halden Unit 3'] })
     const unit = after.objects.find(object => object.id === 'plant:halden-3')!
     expect(set.rows[0]!.priority).not.toBeNull()
+    // Its card line leads with its alert, kept whole when the columns overrun the line.
+    const line = fleetRowItem(set.rows[0]!, (await compileVignette(after, before.state)).sections.flatMap(section => section.kind === 'fleet' ? section.columns : []))
+    expect(line.reading.startsWith(`${set.rows[0]!.alert!.priority} · ${set.rows[0]!.alert!.message}`)).toBe(true)
+    expect(line.reading.length).toBeLessThanOrEqual(120)
+    expect(line.reading).not.toMatch(/ · $/)
     const urgent = { ...after, objects: [...after.objects, ...clones(unit, 13)] }
     const draft = { packId: 'process-plant', categoryId: 'process-plants', closed: false }
     expect(fitSet(urgent, { kind: 'fleet', of: draft }, 'chat', 'views.0')).toMatchObject({ code: 'not_fitted', path: 'views.0' })

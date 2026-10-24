@@ -116,6 +116,20 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     decision: APPROVED,
     ends: 'kept',
   },
+  {
+    id: 'vignette-set-band',
+    draws: 'A trend of a set of units beyond four: the span of every unit\'s value from min to max as a faint area, each point held until the next, its median as a thin line under the named units\' pens, and its legend swatch.',
+    sites: [
+      { file: 'ui/embed/vignette/TrendStrip.svelte', mark: '<path class="band" d={drawing.band.area}', drawn: 'html' },
+      { file: 'ui/embed/vignette/TrendStrip.svelte', mark: '<svg class="band-key"', drawn: 'svg' },
+      { file: 'ui/embed/vignette/trend.ts', mark: 'export const bandPaths', drawn: 'code' },
+    ],
+    standsInFor: ['obc-line-graph'],
+    reason: 'A',
+    evidence: 'Drawn inside the approved vignette-trend-strip. OpenBridge 2.0.0\'s graphs draw lines, not a min–max envelope with a median, and none holds a value until the next point; the band is a tested pure function (vignette-set-trend) in the strip\'s own tokens.',
+    decision: 'pending owner approval',
+    ends: 'kept',
+  },
   // The main app (OpenBridge-free by licence).
   {
     id: 'alert-priority-glyphs',
