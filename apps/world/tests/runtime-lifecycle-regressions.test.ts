@@ -189,6 +189,20 @@ test('regression: API-only run lifetime honors idle policy and recent access', a
   } finally {for(const run of registry.list())await registry.close(run.id);await rm(dataDir,{recursive:true,force:true})}
 })
 
+test('regression: reading a loaded Run\'s execution for presence does not defer its idle close', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'audit-run-presence-'))
+  const idle = createManualIdleTimer()
+  const registry = createSimulationRunRegistry({ dataDir, workspaceId, ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters(), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), idleRuntimeCloseDelayMs: 80, idleRuntimeCloseTimer: idle.arm })
+  try {
+    const run = await registry.create({ scenarioId: 'test-response' })
+    for (let polls = 0; polls < 4; polls += 1) {
+      await idle.advance(30)
+      if (registry.get(run.id) !== undefined) expect((await registry.executionOverview(run.id)).currentSimulationTime).toBeString()
+    }
+    expect(registry.get(run.id)).toBeUndefined()
+  } finally { for (const run of registry.list()) await registry.close(run.id); await rm(dataDir, { recursive: true, force: true }) }
+})
+
 test('regression: unrelated observation does not clear health during a persistent runtime fault', async () => {
   const adapter = { id:'audit.health',version:'1.0.0',packId:'audit',clock:'none',capabilities:[{id:'world.audit.status',kind:'query'}],connect:async(config:any)=>({
     getSnapshot:async()=>({simulationRunId:config.simulationRunId,objects:[],capturedAt:'2026-09-02T00:00:00.000Z'}),
