@@ -20,6 +20,7 @@ import {
 } from './plant-definitions.ts'
 import { processPlantRecordingProfiles, recordedPlantVariables } from './recording.ts'
 import { processPlantObservationCapabilityIds } from './observation/query.ts'
+import { processPlantComparableRoles } from './fleet.ts'
 import { processPlantSimAdapterId } from './sim/constants.ts'
 import { processPlantPackView } from './ui-pack.ts'
 
@@ -160,6 +161,7 @@ export const processPlantPack: WorldPack = {
     declarations: processPlantObservationCapabilityIds.declarations,
     read: processPlantObservationCapabilityIds.read,
     topology: { family: 'flow', capability: processPlantObservationCapabilityIds.topology },
+    comparable: processPlantComparableRoles,
   },
   scenario: {
     itemSchemas: { plant: processPlantScenarioItemSchema },
