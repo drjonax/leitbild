@@ -9,12 +9,14 @@
  *
  * `effort` is a reasoning effort (none, low, medium, ...) or `default` for the
  * provider's own default. Spend is computed from each answer's reported tokens
- * at OpenRouter list prices; the probe stops before a turn could take it past
- * LEITBILD_PROBE_BUDGET_USD (default 3). LEITBILD_PROBE_ORIGIN selects another
- * deployment. Never reads credentials. Evidence for review, not a benchmark.
+ * at direct OpenAI list prices; the probe stops before a turn could take it past
+ * the fork's guard ($0.50 luna, $2.00 sol; LEITBILD_PROBE_BUDGET_USD lowers it).
+ * LEITBILD_PROBE_ORIGIN selects another loopback stack (default
+ * http://127.0.0.1:43100). Never reads credentials. Evidence for review, not a benchmark.
  */
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
+import { assertLocalOrigin, callCostUsd, runGuardUsd } from './fork/openai-spend.ts'
 
 interface Scenario {
   readonly id: string
@@ -44,32 +46,15 @@ const settings = settingArgs.map(arg => {
 if (!directory || !isAbsolute(directory) || settings.length === 0) {
   throw new Error('Usage: bun scripts/model-probe.ts <absolute-output-dir> <model@effort> [<model@effort> ...]')
 }
-const origin = process.env.LEITBILD_PROBE_ORIGIN ?? 'https://leitbild.app'
-const budgetUsd = Number(process.env.LEITBILD_PROBE_BUDGET_USD ?? '3')
-if (!(budgetUsd > 0)) throw new Error('LEITBILD_PROBE_BUDGET_USD must be a positive number')
+// Fork: a loopback stack only, and the plan's per-run guard for the models compared (§6).
+const origin = assertLocalOrigin(process.env.LEITBILD_PROBE_ORIGIN ?? 'http://127.0.0.1:43100')
+const budgetUsd = runGuardUsd(settings.map(setting => setting.model))
 const plantId = 'plant:halden-2'
 await mkdir(directory, { recursive: true })
 if (await Bun.file(join(directory, 'summary.json')).exists()) throw new Error('Output directory already holds a summary; choose a new one')
 
-// OpenRouter list prices per token, keyed by the model id an answer reports.
-const prices = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>(
-  ((await (await fetch('https://openrouter.ai/api/v1/models')).json()).data as ReadonlyArray<any>).map(model => {
-    const input = Number(model.pricing.prompt)
-    return [model.id, {
-      input,
-      output: Number(model.pricing.completion),
-      cacheRead: Number(model.pricing.input_cache_read ?? model.pricing.prompt),
-      // Some providers bill writing the uncached part to the prompt cache; price it at the higher rate.
-      cacheWrite: Math.max(input, Number(model.pricing.input_cache_write ?? 0)),
-    }]
-  }))
-const turnCost = (answer: any): number => {
-  const price = prices.get(answer.model)
-  if (!price) throw new Error(`No OpenRouter list price for ${answer.model}`)
-  const cacheRead = answer.cacheRead ?? 0
-  const uncached = answer.promptTokens - cacheRead
-  return uncached * price.cacheWrite + cacheRead * price.cacheRead + answer.completionTokens * price.output
-}
+// Fork: direct OpenAI list prices (scripts/fork/openai-spend.ts); an answer from an unpriced model stops the probe.
+const turnCost = (answer: any): number => callCostUsd({ model: answer.model, promptTokens: answer.promptTokens, cacheRead: answer.cacheRead ?? 0, completionTokens: answer.completionTokens })
 
 const request = async (path: string, body?: unknown, method = 'POST'): Promise<any> => {
   const response = await fetch(origin + path, {

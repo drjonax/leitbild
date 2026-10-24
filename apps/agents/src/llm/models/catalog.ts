@@ -38,15 +38,16 @@ export interface CuratedModel {
 // model-name exceptions. The primary remains bare so the router may use any
 // provider that genuinely reports it; fallback refs are pinned because they
 // intentionally cross model/provider boundaries.
-export const DEFAULT_MODEL_ID = 'gpt-6-sol'
+// Fork (drjonax/leitbild, multiunit plan §6): GPT-6 Luna on the direct OpenAI
+// connection, which calls tools only with reasoning off; GPT-6 Sol is the
+// quality reference for evals, not the default.
+export const DEFAULT_MODEL_ID = 'gpt-6-luna'
 // Paired with DEFAULT_MODEL_ID: Room Definition Agents that run the default
-// model without their own setting get this effort. Left to the provider,
-// GPT-6 Sol would reason at medium. On scripts/model-probe.ts (2026-10-10)
-// low chose and composed displays as well as none and finished turns sooner.
-export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low'
+// model without their own setting get this effort.
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'none'
+// OpenAI only, so a failure never reaches another vendor.
 export const DEFAULT_MODEL_FALLBACK: ReadonlyArray<string> = [
   'openai:gpt-5.4-mini',
-  'kimi:moonshot-v1-8k',
 ]
 
 // Keyed by provider name. Order within an array is the display order.
@@ -61,9 +62,9 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     // The default first. isNewOpenAIFamily in openai-compatible-wire.ts
     // routes gpt-5.x and gpt-6.x through max_completion_tokens and drops
     // temperature.
-    { id: DEFAULT_MODEL_ID, label: '6 Sol (default)',                   supportsTools: true, supportsImages: true },
+    { id: DEFAULT_MODEL_ID, label: '6 Luna (default)',                  supportsTools: true, supportsImages: true },
+    { id: 'gpt-6-sol',     label: '6 Sol (quality reference)',          supportsTools: true, supportsImages: true },
     { id: 'gpt-6.1-sol',   label: '6.1 Sol (stronger, slower)',         supportsTools: true, supportsImages: true },
-    { id: 'gpt-6-luna',    label: '6 Luna (high volume)',               supportsTools: true, supportsImages: true },
     { id: 'gpt-6-astra',   label: '6 Astra (frontier)',                 supportsTools: true, supportsImages: true },
     { id: 'gpt-5.4',       label: '5.4 (previous default)',             supportsTools: true, supportsImages: true },
     { id: 'gpt-5.4-mini',  label: '5.4 mini (fast fallback)',           supportsTools: true, supportsImages: true },
@@ -105,7 +106,8 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'mistral-large-latest',  label: 'Large (premium)', supportsImages: false },
   ],
   openrouter: [
-    { id: DEFAULT_MODEL_ID,                       label: 'OpenAI 6 Sol (default)', supportsTools: true, supportsImages: true },
+    { id: DEFAULT_MODEL_ID,                       label: 'OpenAI 6 Luna (default)', supportsTools: true, supportsImages: true },
+    { id: 'gpt-6-sol',                          label: 'OpenAI 6 Sol',          supportsTools: true, supportsImages: true },
     { id: 'gpt-6.1-sol',                        label: 'OpenAI 6.1 Sol',        supportsTools: true, supportsImages: true },
     { id: 'gpt-5.4',                            label: 'OpenAI 5.4 (previous)', supportsTools: true, supportsImages: true },
     { id: 'deepseek/deepseek-chat',             label: 'DeepSeek V3 (cheap)', supportsImages: false },
