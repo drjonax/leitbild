@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { embeddedViewListingSchema, type EmbeddedViewListing } from '@leitbild/contracts'
-import type { ObjectId } from '../src/core/model/index.ts'
+import type { ObjectId, OperationalObject } from '../src/core/model/index.ts'
 import {
   acknowledgeShown,
   answerDeckKey,
   backFrom,
   buildDisplayDeck,
   deckEntryAsset,
+  deckSetsOf,
+  deckSetSubject,
   mountedDeckEntries,
   newDisplayAnnouncement,
   observeConversation,
@@ -17,6 +19,7 @@ import {
   packObserves,
   assetDeckKey,
   requestedDeckEntry,
+  setDeckKey,
   shownDeckEntry,
   steppedDeckEntry,
   touchMountedFrames,
@@ -364,5 +367,45 @@ describe('a listing the window cannot show', () => {
     expect(entry).toMatchObject({ source: 'answer', refusal: 'it is a electric-grid.display view, which this window does not show' })
     expect(deck.find(candidate => candidate.key === answerDeckKey('a'))).toMatchObject({ refusal: null })
     expect(deckEntryAsset(entry, assets, { state: 'joined' })).toEqual({ ok: false, reason: 'Not a display this window shows: it is a electric-grid.display view, which this window does not show' })
+  })
+})
+
+describe('fleets (multi-unit M1.5)', () => {
+  const unit = (id: string, cluster: string | undefined) => ({ id, cluster }) as unknown as OperationalObject
+  const plants = {
+    id: 'process-plants', label: 'Process plants',
+    members: { group: { label: 'Cluster', of: (object: OperationalObject) => (object as unknown as { cluster?: string }).cluster }, columns: [], row: () => ({}) },
+  }
+  const rows = [
+    { category: plants, objects: [unit('p1', 'north'), unit('p2', 'south'), unit('p3', 'north'), unit('p4', undefined)] },
+    { category: { id: 'sites', label: 'Sites' }, objects: [unit('s1', 'north')] },
+  ]
+  const sets = deckSetsOf(rows)
+
+  test('one per group a category declares that the Run\'s units are in, in rail order of its first member, never for a category without groups', () => {
+    expect(sets).toEqual([
+      { categoryId: 'process-plants', categoryLabel: 'Process plants', group: 'north', members: 2 },
+      { categoryId: 'process-plants', categoryLabel: 'Process plants', group: 'south', members: 1 },
+    ])
+    expect(deckSetSubject(sets[0]!)).toEqual({ of: { category: 'process-plants', group: 'north' } })
+  })
+
+  test('are pinned ahead of the overviews as generated displays, and act on no single asset', () => {
+    const deck = buildDisplayDeck({ simulationRunId: runId, sets, assets, listings: [listing('one')], shown: null })
+    expect(keys(deck)).toEqual([
+      setDeckKey(runId, sets[0]!), setDeckKey(runId, sets[1]!), assetDeckKey(runId, 'unit-a'), assetDeckKey(runId, 'unit-b'), answerDeckKey('one'),
+    ])
+    expect(deck[0]).toMatchObject({ source: 'set', title: 'Fleet · north', caption: 'Process plants · 2 units', kind: 'generated', inRun: true })
+    expect(deck[1]).toMatchObject({ caption: 'Process plants · 1 unit' })
+    expect(deckEntryAsset(deck[0]!, assets, joined)).toEqual({ ok: false, reason: 'A fleet is about every unit of north; open a unit for its tools' })
+    expect(steppedDeckEntry(deck, deck[1]!.key, 'next')?.key).toBe(assetDeckKey(runId, 'unit-a'))
+  })
+
+  test('a shown fleet whose group empties stays where it was, captioned', () => {
+    const before = buildDisplayDeck({ simulationRunId: runId, sets, assets, listings: [], shown: null })
+    const shown = shownDeckEntry(before, before[1]!, [])
+    expect(shown).toMatchObject({ groupIndex: 1 })
+    const after = buildDisplayDeck({ simulationRunId: runId, sets: [sets[0]!], assets, listings: [], shown })
+    expect(after[1]).toMatchObject({ key: setDeckKey(runId, sets[1]!), caption: 'No longer in this Run', inRun: false })
   })
 })
