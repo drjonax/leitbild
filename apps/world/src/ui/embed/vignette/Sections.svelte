@@ -8,8 +8,11 @@
   import { standsBeside, VIGNETTE_ROW_PX } from './grid.ts'
   import { valueLook } from './readout.ts'
   import type { VignetteSnapshot } from './vignette-client.ts'
+  import { setPenValues, setStripRows } from './set-trend.ts'
   import AlertsSection from './AlertsSection.svelte'
+  import CompareMatrix from './CompareMatrix.svelte'
   import EntityTable from './EntityTable.svelte'
+  import FleetTable from './FleetTable.svelte'
   import FlowTopology from './FlowTopology.svelte'
   import GroupedValues from './GroupedValues.svelte'
   import MapFocus from './MapFocus.svelte'
@@ -55,6 +58,24 @@
         {#each section.strips as pens, strip (strip)}
           <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
         {/each}
+      {:else if section.kind === 'set-trend'}
+        {@const set = latest?.sets?.[index]}
+        {#if set?.kind === 'set-trend'}
+          {#each section.strips as column, strip (strip)}
+            {@const drawn = set.strips[strip]}
+            {#if drawn !== undefined}
+              <TrendStrip pens={setPenValues(column, drawn.pens)} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs}
+                rows={setStripRows(section.rows, section.strips.length)} axis={strip === section.strips.length - 1}
+                band={drawn.band === null ? undefined : { points: snapshot.bands.get(`${index}:${strip}`) ?? [], now: drawn.band }} />
+            {/if}
+          {/each}
+        {/if}
+      {:else if section.kind === 'fleet'}
+        {@const set = latest?.sets?.[index]}
+        <FleetTable {section} set={set?.kind === 'fleet' ? set : undefined} />
+      {:else if section.kind === 'compare'}
+        {@const set = latest?.sets?.[index]}
+        <CompareMatrix {section} set={set?.kind === 'compare' ? set : undefined} {observations} />
       {:else if section.kind === 'alerts'}
         {@const set = latest?.sets?.[index]}
         <AlertsSection rows={latest?.alerts ?? []} {section} room={section.rows} members={set?.kind === 'alerts' ? set.members : undefined} />
