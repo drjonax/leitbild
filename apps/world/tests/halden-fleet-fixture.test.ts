@@ -16,10 +16,10 @@ describe('the fork-only N-unit Halden fixtures', () => {
       expect(fixture.id).toBe(`halden-fleet-${units}`)
       expect(builtinScenarioDefinitions.some(definition => definition.id === fixture.id)).toBe(false)
       const plants = fixture.packs.find(pack => pack.id === 'process-plant')!.items
-      expect(plants.map(item => item.id)).toEqual(Array.from({ length: units }, (_, at) => `plant:halden-${at + 1}`))
+      expect(plants.map(item => String(item.id))).toEqual(Array.from({ length: units }, (_, at) => `plant:halden-${at + 1}`))
       expect(new Set(plants.map(item => item.clusterId))).toEqual(new Set(['halden-power-complex']))
       expect(new Set(plants.map(item => JSON.stringify(item.model))).size).toBe(1)
-      expect(fixture.connections?.map(connection => connection.system.objectId)).toEqual(['plant:halden-1', 'plant:halden-2', 'plant:halden-3', 'plant:halden-4'])
+      expect(fixture.connections?.map(connection => String(connection.system.objectId))).toEqual(['plant:halden-1', 'plant:halden-2', 'plant:halden-3', 'plant:halden-4'])
     }
   })
 
