@@ -17,6 +17,8 @@ const LEITBILD_ASSISTANCE_BODY_MAX_CHARS = 13_208
 // The procedure runner rides along in every Assistant prompt, not only while a procedure runs.
 const PROCEDURE_RUNNER_BODY_MAX_CHARS = 4_000
 const DESCRIPTION_MAX_CHARS = 1_024
+// Selected beside operator-displays in every Assistant prompt; about 500 tokens as injected.
+const MULTIUNIT_DISPLAYS_INJECTED_MAX_CHARS = 2_100
 
 describe('Leitbild Assistant skills', () => {
   test('every selected skill exists and the display and assistance skills stay within their prompt budgets', async () => {
@@ -64,6 +66,24 @@ describe('Leitbild Assistant skills', () => {
     // A live procedure is worked step by step (procedure-runner); a question about a step reads that step, not the whole document.
     expect(assistance.body).toContain('as procedure-runner says: `world.procedure.run.step.read` reads the step, without `runs.list` or the whole document')
     expect(assistance.body).toContain('read `world.procedure.document.read` with its `stepId`')
+  })
+
+  test('the multi-unit display skill stays within its prompt budget, names its views and sets, and names no pack', async () => {
+    const store = createSkillStore()
+    await loadSkills(join(import.meta.dir, '..', '..', 'skills'), store, createToolRegistry())
+    const multiunit = store.get('multiunit-displays')!
+    expect(multiunit.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX_CHARS)
+    expect(multiunit.description).toEndWith('Skip when one unit or a sentence answers.')
+    expect(`[${multiunit.name}] ${multiunit.description}\n${multiunit.body}`.length).toBeLessThanOrEqual(MULTIUNIT_DISPLAYS_INJECTED_MAX_CHARS)
+    expect(multiunit.allowedToolNames).toEqual(['workspace_explore', 'workspace_call'])
+    // Its compose, fence and citation rules are operator-displays' own, which points here.
+    expect(multiunit.body).toContain('This extends operator-displays')
+    expect(store.get('operator-displays')!.body).toContain('unit sets: multiunit-displays.')
+    for (const view of ['"fleet"', '"compare"', '"trend"', '"alerts"']) expect(multiunit.body).toContain(`{"kind": ${view}, "of": <set>`)
+    expect(multiunit.body).toContain('{"category": "<category>", "group": "<group>"}')
+    expect(multiunit.body).toContain('never list more than 12 ids')
+    expect(multiunit.body).toContain('never pick a subset that hides one')
+    expect(`${multiunit.description}\n${multiunit.body}`).not.toMatch(/plant|grid|weather|einsatz|ambulance|drone|reactor|halden/i)
   })
 
   test('the procedure runner stays within its prompt budget and runs the procedure itself, the person supervising', async () => {
