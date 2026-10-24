@@ -35,16 +35,15 @@ const isLikelyThinking = (id: string): boolean =>
   THINKING_ID_PATTERNS.some(rx => rx.test(id))
 
 describe('CURATED_MODELS thinking-tag invariant', () => {
-  test('the requested GPT-6 Sol policy is the single catalog default', () => {
+  test('the fork\'s GPT-6 Luna policy is the single catalog default, falling back to OpenAI only', () => {
     expect(CURATED_MODELS.openai?.[0]?.id).toBe(DEFAULT_MODEL_ID)
     expect(CURATED_MODELS.openrouter?.[0]?.id).toBe(DEFAULT_MODEL_ID)
-    expect(DEFAULT_MODEL_ID).toBe('gpt-6-sol')
-    expect(DEFAULT_REASONING_EFFORT).toBe('low')
+    expect(DEFAULT_MODEL_ID).toBe('gpt-6-luna')
+    expect(DEFAULT_REASONING_EFFORT).toBe('none')
     expect(CURATED_MODELS.openai?.[0]?.supportsTools).toBe(true)
     expect(CURATED_MODELS.openrouter?.[0]?.supportsTools).toBe(true)
     expect(DEFAULT_MODEL_FALLBACK).toEqual([
       'openai:gpt-5.4-mini',
-      'kimi:moonshot-v1-8k',
     ])
   })
   test('every catalog entry whose id matches a thinking pattern carries kind: thinking', () => {
