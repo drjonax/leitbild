@@ -53,7 +53,7 @@
   /** The card's height beyond its content (its title, its padding), in its own px, as last measured. */
   let overhead = $state(0)
   let viewport = $state({ width: window.innerWidth, height: window.innerHeight })
-  let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), sampleError: null })
+  let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), bands: new Map(), sampleError: null })
   let failure = $state<string | null>(null)
   let Actions = $state.raw<Component<PackElementActionsProps> | null>(null)
   let opening = $state<DisplayOpening | null>(null)
