@@ -9,7 +9,7 @@ import { embeddedViewListingSchema, type EmbeddedViewEnvelope, type EmbeddedView
 const CAPTION_MAX = 120
 
 /** FNV-1a over the text, as 8 hex digits: short, stable keys for long states. */
-const digest = (text: string): string => {
+export const digest = (text: string): string => {
   let hash = 0x811c9dc5
   for (let at = 0; at < text.length; at += 1) {
     hash ^= text.charCodeAt(at)

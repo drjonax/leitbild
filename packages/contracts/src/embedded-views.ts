@@ -120,6 +120,8 @@ export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope =>
 export {
   embeddedViewFragment,
   embeddedViewPath,
+  embeddedViewWindowName,
+  EMBEDDED_VIEW_WINDOW_FEATURES,
   EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_MAX_HEIGHT,
   EMBEDDED_VIEW_MIN_HEIGHT,

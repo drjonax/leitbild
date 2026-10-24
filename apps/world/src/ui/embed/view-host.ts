@@ -41,6 +41,8 @@ export interface ViewHostPorts {
   readonly listen: (receive: (message: ReceivedMessage) => void) => () => void
   /** Says that the framing window sent something this view cannot read. */
   readonly refused: (data: unknown) => void
+  /** A page of its own (a pop-out): hands a display it opens to a display window of its Workspace. */
+  readonly detached?: (listing: EmbeddedViewListing) => void
 }
 
 export type ZoomStep = 'in' | 'out' | 'reset'
@@ -54,7 +56,7 @@ export const createViewHost = (ports: ViewHostPorts) => {
   const onWindow = new Set<() => void>()
   const openingSubscribers = new Set<(opening: DisplayOpening | null) => void>()
   const post = (message: DisplayFrameMessage | EmbeddedViewOpenMessage): void => ports.parent?.postMessage(message, ports.origin)
-  const opening = (): DisplayOpening | null => presentedByWindow ? 'window' : relayed ? 'relay' : null
+  const opening = (): DisplayOpening | null => presentedByWindow ? 'window' : relayed || (ports.parent === null && ports.detached !== undefined) ? 'relay' : null
   const openingChanged = (): void => {
     for (const subscriber of [...openingSubscribers]) subscriber(opening())
   }
@@ -132,6 +134,7 @@ export const createViewHost = (ports: ViewHostPorts) => {
     openDisplay: (request: { readonly state: string; readonly title: string; readonly listing: () => EmbeddedViewListing }): boolean => {
       const where = opening()
       if (where === 'window') post({ type: 'world:display-open', state: request.state, title: request.title })
+      else if (where === 'relay' && ports.parent === null) ports.detached?.(request.listing())
       else if (where === 'relay') post({ type: 'leitbild:view-open', view: request.listing() })
       return where !== null
     },
@@ -295,11 +298,20 @@ export const followPresentation = (config: {
 }
 
 let pageHost: ViewHost | undefined
+let detachedOpen: ((listing: EmbeddedViewListing) => void) | null = null
+
+/** A page of its own (a pop-out) sends the displays its view opens here; returns the stop. */
+export const openDetachedWith = (open: (listing: EmbeddedViewListing) => void): (() => void) => {
+  detachedOpen = open
+  return () => { if (detachedOpen === open) detachedOpen = null }
+}
 
 /** This page's view host; a page has one framing window, so it has one host. */
 export const embeddedDisplayFrame = (): ViewHost => {
+  const ownPage = window.parent === window
   pageHost ??= createViewHost({
-    parent: window.parent === window ? null : window.parent,
+    parent: ownPage ? null : window.parent,
+    ...(ownPage ? { detached: (listing: EmbeddedViewListing) => detachedOpen?.(listing) } : {}),
     origin: location.origin,
     listen: receive => {
       const listener = (event: MessageEvent): void => receive(event)

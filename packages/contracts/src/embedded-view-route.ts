@@ -21,3 +21,23 @@ export const EMBEDDED_VIEW_FRAGMENT_KEY = 'view='
 
 export const embeddedViewFragment = (envelope: EmbeddedViewEnvelope): string =>
   `#${EMBEDDED_VIEW_FRAGMENT_KEY}${encodeURIComponent(JSON.stringify(envelope))}`
+
+/** FNV-1a over the text, as 8 hex digits. */
+const fnv1a = (text: string): string => {
+  let hash = 0x811c9dc5
+  for (let at = 0; at < text.length; at += 1) {
+    hash ^= text.charCodeAt(at)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+/**
+ * The browser window a view pops out into, opened on the view's route from a
+ * click: one per view, whoever opens it, so popping out the same view again
+ * brings its window forward.
+ */
+export const embeddedViewWindowName = (envelope: EmbeddedViewEnvelope): string =>
+  `leitbild-view-${fnv1a(`${envelope.subject.workspaceId}\n${envelope.subject.id}\n${envelope.viewType}\n${envelope.state}`)}`
+
+export const EMBEDDED_VIEW_WINDOW_FEATURES = 'popup,width=1024,height=720'
