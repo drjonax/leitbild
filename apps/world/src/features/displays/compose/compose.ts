@@ -494,7 +494,10 @@ const chipsOf = async (run: ComposeRun, subjects: ReadonlyArray<Subject>): Promi
 
 /** A default's title from what is declared or presented: never a word World adds. */
 const titleOf = async (run: ComposeRun, subject: Subject): Promise<string> => {
-  if (subject.kind === 'collection') return run.packs.find(pack => pack.descriptor.id === subject.of.packId)!.presentation.categories.find(category => category.id === subject.of.categoryId)!.label
+  if (subject.kind === 'collection') {
+    const label = run.packs.find(pack => pack.descriptor.id === subject.of.packId)!.presentation.categories.find(category => category.id === subject.of.categoryId)!.label
+    return subject.of.group === undefined ? label : `${label} · ${subject.of.group}`
+  }
   if (subject.kind === 'connection') return [subject.connection.system.objectId, subject.connection.network.objectId].map(id => visibleObject(run, id)?.label ?? id).join(' – ')
   const object = visibleObject(run, subject.objectId)!
   if (subject.kind === 'observable') return (await declaredRefs(run, [subject.ref])).get(subject.ref)?.observable.label ?? object.label

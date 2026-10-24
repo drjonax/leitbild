@@ -1,15 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { DISPLAY_CARD_MAX_TEXT, displayCardTextLength } from '@leitbild/contracts'
-import { displayRunOf } from '../src/core/api/display-capabilities.ts'
+import { displayRouteInputs, displayRunOf } from '../src/core/api/display-capabilities.ts'
 import type { ObjectId, OperationalObject } from '../src/core/model/index.ts'
 import type { Observation } from '../src/core/observation/model.ts'
 import { displaySpecSchema } from '../src/core/observation/spec.ts'
 import { fleetRowItem } from '../src/features/displays/compose/card.ts'
-import { composeVignette, type ComposeOutcome } from '../src/features/displays/compose/compose.ts'
+import { composeDefault, composeVignette, type ComposeOutcome } from '../src/features/displays/compose/compose.ts'
 import type { SetSample, VignetteState } from '../src/features/displays/compose/model.ts'
 import { fitSet, sampleSet, SET_ROWS } from '../src/features/displays/compose/sets.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { assembleRunContext } from '../src/features/displays/context/run-context.ts'
+import { fillsFrame } from '../src/ui/embed/vignette/grid.ts'
 import { fleetRun, fleetViewer } from './fixtures/fleet-runs.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -88,6 +89,21 @@ describe('a fleet of twelve units', () => {
     expect(fitSet(many, draft, 'window', 'views.0')).toBe(2 + SET_ROWS.window + 1)
     const set = await sampleSet(many, { ...draft, rows: 2 + SET_ROWS.chat + 1 }, () => undefined)
     expect(set).toMatchObject({ kind: 'fleet', members: 30, more: 30 - 12, moreAtCaution: 0 })
+  })
+
+  test('is a group\'s World default, as the display window\'s pinned fleet opens it, and fills the window\'s frame', async () => {
+    const outcome = await composeDefault(run, displayRouteInputs.default.parse({ subject: { of: CLUSTER } }).subject)
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    expect(outcome.state.title).toBe('Process plants · halden-power-complex')
+    expect(outcome.state.views).toEqual([expect.objectContaining({ kind: 'fleet', rows: 2 + 12 })])
+    expect(fillsFrame(JSON.stringify(outcome.state))).toBe(true)
+    // A category without a group keeps its table, alerts and map: an answer's advice, as tall as its rows.
+    const plain = await composeDefault(run, displayRouteInputs.default.parse({ subject: { of: { category: 'process-plants' } } }).subject)
+    if (!plain.ok) throw new Error(JSON.stringify(plain.issues))
+    expect(plain.state.views.map(view => view.kind)).toEqual(['collection', 'alerts', 'map'])
+    expect(fillsFrame(JSON.stringify(plain.state))).toBe(false)
+    expect(fillsFrame(JSON.stringify({ views: [{ kind: 'fleet' }, { kind: 'compare' }] }))).toBe(true)
+    expect(fillsFrame(JSON.stringify({ views: [{ kind: 'fleet' }, { kind: 'alerts' }] }))).toBe(false)
   })
 })
 
