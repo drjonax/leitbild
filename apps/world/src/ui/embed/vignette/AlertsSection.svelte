@@ -13,15 +13,17 @@
   // words (wordsThatFit), so the icon, UNACK, a FIRST OUT mark, the state and
   // the time are never cut; the full message stays in the row's title and in
   // its text for assistive technology.
-  let { rows, section, room }: {
+  let { rows, section, room, members }: {
     rows: ReadonlyArray<AlertRow>
     /** Its objects (or the whole Run), and the elements or observables it narrows to. */
     section: Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs'>
+    /** A set's members now (the sample's), where the section lists a set's alerts. */
+    members?: ReadonlyArray<string> | undefined
     /** The section's rows: one for its head, the rest for lines. */
     room: number
   } = $props()
 
-  const shown = $derived(sectionLines(rows, section, Math.max(1, room - 1)))
+  const shown = $derived(sectionLines(rows, section, Math.max(1, room - 1), members))
   const count = $derived(shown.lines.length + shown.more)
 
   /** A message as many of its whole words as its room shows, fitted again when its room or its text changes. */

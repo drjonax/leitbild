@@ -11,11 +11,12 @@ import type { DisplaySpec, View } from '../../../core/observation/spec.ts'
 import { alertItem, assembleCard, entityItem, slotItems, valueItem } from './card.ts'
 import { declarationOf, declaredRefs, same, valueOf, visibleObject } from './declared.ts'
 import { defaultViews, elementRefs, LEAD_ROWS, leadNow, leadRefs, ownStates, recordedOf, type DraftView } from './defaults.ts'
-import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
+import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type Collection, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
 import { TOPOLOGY_REACH } from '../topology/scope.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
 import { alertRowsFor, alertsOf, entityRows, groupValues, readNow, readsOf, slotsOf, stripsOf } from './view.ts'
+import { fitSet, isSetAlerts, isSetView, resolveFleet, resolveSetSignals, resolveUnitSet, SET_PENS, SET_ROWS, setCardItems, unitsOf, type Frame } from './sets.ts'
 
 export type ComposeOutcome =
   | { readonly ok: true; readonly state: VignetteState; readonly card: DisplayCard; readonly rows: number }
@@ -23,8 +24,7 @@ export type ComposeOutcome =
 
 const MAX_STATE = 4_096
 const MAX_ADJUSTMENTS = 8
-const ENTITY_ROWS = 12
-/** The most objects a state names in one view. */
+/** The most objects a state names in one view: an explicit list's cap; a collection's members are fitted by rows. */
 const MAX_OBJECTS = 48
 const refuse = (issues: ReadonlyArray<ComposeIssue>): ComposeOutcome => ({ ok: false, issues })
 const unfit = (path: string, message: string): ComposeIssue => ({ path, code: 'not_fitted', message })
@@ -113,7 +113,14 @@ const topologyView = async (run: ComposeRun, view: Extract<View, { kind: 'topolo
 const resolveView = async (run: ComposeRun, view: View, path: string, subjects: ReadonlyArray<Subject>, kept: Kept): Promise<DraftView | ComposeIssue> => {
   const within = subjects.flatMap(subjectObjects)
   if (view.kind === 'fleet' || view.kind === 'compare' || ((view.kind === 'trend' || view.kind === 'alerts') && view.of !== undefined)) {
-    return notObserved(path, `World does not compose ${view.kind} views of a set yet`)
+    const of = await resolveUnitSet(run, view.of!, path)
+    if (isIssue(of)) return of
+    if (view.kind === 'fleet') return resolveFleet(run, of, path) ?? { kind: 'fleet', of: of as Collection }
+    if (view.kind === 'alerts') return { kind: 'alerts', objectIds: 'set', of: of as Collection }
+    if (view.kind === 'trend' && view.signals.length > SET_PENS) return unfit(`${path}.signals`, `a trend of a set holds at most ${SET_PENS} quantities, a strip each`)
+    const signals = await resolveSetSignals(run, of, view.signals, path, view.kind === 'trend')
+    if (isIssue(signals)) return signals
+    return view.kind === 'compare' ? { kind: 'compare', of, signals: [...signals] } : { kind: 'set-trend', of, signals: [...signals], horizon: view.horizon ?? '10m' }
   }
   if (view.kind === 'trend') {
     const refs = await signalRefs(run, view.signals, `${path}.signals`, within, kept, true)
@@ -136,7 +143,7 @@ const resolveView = async (run: ComposeRun, view: View, path: string, subjects: 
   if (view.kind === 'alerts') {
     if (view.scope === 'run') return { kind: 'alerts', objectIds: 'run' }
     const collection = subjects.find((subject): subject is Extract<Subject, { kind: 'collection' }> => subject.kind === 'collection')
-    const members = collection === undefined ? [] : (await defaultViews(run, collection)).flatMap(entry => entry.kind === 'alerts' && entry.objectIds !== 'run' ? entry.objectIds : [])
+    const members = collection === undefined ? [] : (await defaultViews(run, collection)).flatMap(entry => entry.kind === 'alerts' && Array.isArray(entry.objectIds) ? entry.objectIds : [])
     const objectIds = [...new Set([...within, ...members])].filter(id => visibleObject(run, id) !== undefined)
     return objectIds.length === 0 ? notObserved(path, 'the subjects have no objects to show alerts of') : { kind: 'alerts', objectIds }
   }
@@ -179,7 +186,7 @@ const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>, quiet: (v
     const known = merged.find(entry => entry.kind === view.kind)
     if (known?.kind === 'values' && view.kind === 'values') merged[merged.indexOf(known)] = { kind: 'values', refs: [...new Set([...known.refs ?? [], ...view.refs ?? []])] }
     else if (known?.kind === 'trend' && view.kind === 'trend') known.refs.splice(0, Infinity, ...new Set([...known.refs, ...view.refs]))
-    else if (known?.kind === 'alerts' && view.kind === 'alerts' && known.objectIds !== 'run' && view.objectIds !== 'run') {
+    else if (known?.kind === 'alerts' && view.kind === 'alerts' && Array.isArray(known.objectIds) && Array.isArray(view.objectIds)) {
       merged[merged.indexOf(known)] = { kind: 'alerts', objectIds: [...new Set([...known.objectIds, ...view.objectIds])] }
     } else if (known?.kind === 'map' && view.kind === 'map' && known.objectIds !== undefined && view.objectIds !== undefined) known.objectIds.splice(0, Infinity, ...new Set([...known.objectIds, ...view.objectIds]))
     else if (known === undefined || view.kind === 'slots') merged.push(structuredClone(view) as DraftView)
@@ -192,14 +199,18 @@ const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>, quiet: (v
   return sorted.filter(view => !giving.has(view)).slice(0, 4)
 }
 
-const covers = (views: ReadonlyArray<ResolvedView>, subject: Subject): boolean => views.some(view => {
+const covers = (run: ComposeRun, views: ReadonlyArray<ResolvedView>, subject: Subject): boolean => views.some(view => {
   // The Run's alerts are every subject's alerts too.
   if (view.kind === 'alerts' && view.objectIds === 'run') return true
+  // A set covers itself and each unit in it now.
+  if (isSetView(view) || isSetAlerts(view)) {
+    return subject.kind === 'collection' ? JSON.stringify(view.of) === JSON.stringify(subject.of) : unitsOf(run, view.of!).some(member => subjectObjects(subject).includes(member.id as ObjectId))
+  }
   if (subject.kind === 'collection') return (view.kind === 'collection' || view.kind === 'map') && JSON.stringify(view.of) === JSON.stringify(subject.of)
   if (subject.kind === 'observable' && (view.kind === 'values' || view.kind === 'trend')) return view.refs?.includes(subject.ref) === true
   const objects: ReadonlyArray<string> = view.kind === 'values' ? [...(view.refs ?? []).map(refObjectId), ...view.lead === undefined ? [] : [view.lead.objectId]]
     : view.kind === 'trend' ? view.refs.map(refObjectId) : view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
-    : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && view.objectIds !== 'run' ? view.objectIds : view.kind === 'map' ? view.objectIds ?? [] : []
+    : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && Array.isArray(view.objectIds) ? view.objectIds : view.kind === 'map' ? view.objectIds ?? [] : []
   return subjectObjects(subject).some(objectId => objects.includes(objectId))
 })
 
@@ -210,8 +221,6 @@ const countAdjustment = (adjusted: DisplayCardAdjustment[], adjustment: DisplayC
 /** The alert lines a World default's own alerts view keeps though none are raised yet, so an upset's first alerts show as they come. */
 const WATCHED_ALERT_LINES = 4
 
-/** Where a vignette is shown: a chat answer stacks its views in 40 rows; a window may stand a tall drawing beside them (Q20). */
-type Frame = 'chat' | 'window'
 const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefined, subjects: ReadonlyArray<Subject>, drafts: ReadonlyArray<DraftView>, kept: Kept, frame: Frame, chipped: ReadonlyArray<string> = []): Promise<ComposeOutcome> => {
   const adjusted: DisplayCardAdjustment[] = []
   /** What the fit leaves out, counted on the card (Q15: never silent). */
@@ -274,10 +283,14 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         if (inStrips.length < refs.length) { dropped += refs.length - inStrips.length; countAdjustment(adjusted, { kind: 'layout', text: `${refs.length - inStrips.length} pens not shown` }) }
         fitted.push({ ...view, refs: inStrips, rows: strips.slice(0, 4).reduce((sum, strip) => sum + Math.max(3, strip.length), 0) + 1 })
       }
+    } else if (view.kind === 'fleet' || view.kind === 'compare' || view.kind === 'set-trend') {
+      const rows = fitSet(run, view, frame, path)
+      if (isIssue(rows)) issues.push(rows)
+      else fitted.push({ ...view, rows } as ResolvedView)
     } else if (view.kind === 'alerts') {
       // A state names at most 48 objects: those whose alerts lead in the context's order stay, the rest are counted.
       let objectIds = view.objectIds
-      if (objectIds !== 'run' && objectIds.length > MAX_OBJECTS) {
+      if (Array.isArray(objectIds) && objectIds.length > MAX_OBJECTS) {
         const leading = [...new Set(alertsOf(run, { ...view, objectIds, rows: 1 }).map(row => row.objectId))]
         const keep = [...leading, ...objectIds.filter(id => !leading.includes(id))].slice(0, MAX_OBJECTS)
         const cut = objectIds.filter(id => !keep.includes(id))
@@ -299,7 +312,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         view.objectIds.splice(MAX_OBJECTS)
       }
       const count = entityRows(run, { ...view, rows: VIGNETTE_MAX_ROWS } as Extract<ResolvedView, { kind: 'entity' | 'collection' }>).rows.length
-      fitted.push({ ...view, rows: 1 + Math.max(1, Math.min(ENTITY_ROWS, count)) + (count > ENTITY_ROWS ? 1 : 0) } as ResolvedView)
+      fitted.push({ ...view, rows: 1 + Math.max(1, Math.min(SET_ROWS[frame], count)) + (count > SET_ROWS[frame] ? 1 : 0) } as ResolvedView)
     } else if (view.kind === 'topology') {
       const graph = await topologyOf(run, view.objectId)
       let request = view.request
@@ -382,7 +395,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
     countAdjustment(adjusted, { kind: 'layout', text: `drawing scaled to ${Math.round(100 * (rows - 1) / (natural - 1))} % to fit` })
   }
   if (total() > VIGNETTE_MAX_ROWS) return refuse([unfit('views', `the views need ${total()} rows; one vignette holds ${VIGNETTE_MAX_ROWS}`)])
-  const uncovered = subjects.findIndex(subject => !covers(fitted, subject))
+  const uncovered = subjects.findIndex(subject => !covers(run, fitted, subject))
   if (fitted.length === 0 || uncovered >= 0) return refuse([unfit(uncovered >= 0 ? `subjects.${uncovered}` : 'views', 'nothing this vignette can show is about this subject')])
 
   const at = run.clock === undefined ? { at: new Date().toISOString(), clock: 'wall' as const } : { at: run.clock.currentTime, clock: 'simulation' as const }
@@ -394,7 +407,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
 /** The card of a fitted state: every value it reads, the alerts and table rows its rows hold; each one a section leaves out is counted and said. */
 const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted: ReadonlyArray<DisplayCardAdjustment>, dropped: number): Promise<DisplayCard> => {
   // Named values first, then the chips' and the views' own values; what a drawing binds comes after the alerts and tables.
-  const { leads, refs: read, observations } = await readNow(run, state)
+  const { leads, refs: read, observations, sets } = await readNow(run, state)
   const own = readsOf(state, leads).refs
   const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...own])].filter(ref => read.includes(ref))
   const bound = read.filter(ref => !refs.includes(ref))
@@ -407,8 +420,17 @@ const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted:
     hidden += count
     countAdjustment(adjusted, { kind: 'layout', text: `${count} of ${total} ${what} not shown` })
   }
+  const setItems = []
+  for (const view of state.views) {
+    if (!isSetView(view)) continue
+    const set = await setCardItems(run, view, ref => sets.get(ref))
+    setItems.push(...set.items)
+    hidden += set.hidden
+    for (const adjustment of set.adjusted) countAdjustment(adjusted, adjustment)
+  }
   const items = [
     ...valueItems(refs),
+    ...setItems,
     ...state.views.flatMap(view => {
       if (view.kind !== 'alerts') return []
       const rows = alertsOf(run, view)

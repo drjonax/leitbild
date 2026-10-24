@@ -12,11 +12,12 @@ import { alertRows, leadsObject, priorityRank, worstFirst, type AlertRow } from 
 import { declarationOf, declaredRefs, valueOf, visibleObject, type Declared } from './declared.ts'
 import { planLead, readLeads, type LeadPlan } from './defaults.ts'
 import {
-  ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type RecordedSeries, type ResolvedView, type SlotDeclaration, type VignetteSample,
+  ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type RecordedSeries, type ResolvedView, type SetSample, type SlotDeclaration, type VignetteSample,
   type VignetteSection, type VignetteState, type VignetteValue, type VignetteView,
 } from './model.ts'
-import { presentedOf } from './present.ts'
+import { membersDeclared, presentedOf } from './present.ts'
 import type { ComposeRun } from './resolve.ts'
+import { isSetAlerts, isSetView, sampleSet, setRefs, setSection } from './sets.ts'
 import { bindingRefs, drawingOf, scopeWithin, topologyOf, topologySection } from './topology.ts'
 
 /** A Run's record of one series between two instants and up to its hold before them (the value held into `from`), Run time ascending, with that hold. */
@@ -34,7 +35,7 @@ type SlotValue = VignetteSample['slots'][string][string]
 export const readsOf = (state: VignetteState, leads?: ReadonlyMap<number, ReadonlyArray<string>>): { readonly refs: ReadonlyArray<string>; readonly objectIds: ReadonlyArray<string> } => ({
   refs: [...new Set([...state.chips ?? [], ...state.views.flatMap((view, index) => view.kind === 'values' || view.kind === 'trend' ? leads?.get(index) ?? view.refs ?? [] : [])])],
   objectIds: [...new Set(state.views.flatMap(view => view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
-    : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && view.objectIds !== 'run' ? view.objectIds
+    : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && Array.isArray(view.objectIds) ? view.objectIds
       : view.kind === 'map' ? [...view.objectIds ?? [], ...view.around === undefined ? [] : [view.around]]
         : view.kind === 'values' && view.lead !== undefined ? [view.lead.objectId] : []))],
 })
@@ -47,6 +48,8 @@ export interface StateReading {
   readonly refs: ReadonlyArray<string>
   /** Those refs' values now, in that order. */
   readonly observations: ReadonlyArray<Observation>
+  /** Each quantity of its comparisons and set trends on each member now (setRefs), by ref. */
+  readonly sets: ReadonlyMap<string, Observation>
 }
 
 /** The refs a state's drawings bind, as each is scoped now. */
@@ -75,14 +78,15 @@ export const readNow = async (run: ComposeRun, state: VignetteState): Promise<St
   const plans = new Map<number, LeadPlan>()
   for (const [index, view] of state.views.entries()) if (view.kind === 'values' && view.lead !== undefined) plans.set(index, await planLead(run, view.lead, view.rows))
   const bound = await bindingsOf(run, state)
-  const { observations, led } = await readLeads(run, [...plans.values()], [...readsOf(state).refs, ...bound])
+  const members = setRefs(run, state)
+  const { observations, led } = await readLeads(run, [...plans.values()], [...readsOf(state).refs, ...bound, ...members])
   const leads = new Map([...plans.keys()].map((index, at) => {
     const view = state.views[index] as Extract<VignetteState['views'][number], { kind: 'values' }>
     return [index, [...new Set([...view.refs ?? [], ...led[at]!.refs])].slice(0, view.rows)] as const
   }))
   const refs = [...new Set([...readsOf(state, leads).refs, ...bound])].filter(ref => visibleObject(run, refObjectId(ref)) !== undefined)
   const values = new Map(observations.map(observation => [observation.ref, observation] as const))
-  return { leads, refs, observations: refs.flatMap(ref => values.get(ref) ?? []) }
+  return { leads, refs, observations: refs.flatMap(ref => values.get(ref) ?? []), sets: new Map(members.flatMap(ref => values.has(ref) ? [[ref, values.get(ref)!] as const] : [])) }
 }
 
 /** Parallel values (one element class, each element in its own group, one value per quantity): a table, one line per element; else null. */
@@ -106,7 +110,7 @@ export const stripsOf = (values: ReadonlyArray<VignetteValue>): ReadonlyArray<Re
     return Array.from({ length: Math.ceil(pens.length / 4) }, (_, at) => pens.slice(at * 4, at * 4 + 4))
   })
 
-const worstAlert = (object: OperationalObject): AlertRow | undefined => contextOrder({ objects: [object] }, alertRows([object], () => ({ label: object.label, categoryId: '' }))).rows[0]
+export const worstAlert = (object: OperationalObject): AlertRow | undefined => contextOrder({ objects: [object] }, alertRows([object], () => ({ label: object.label, categoryId: '' }))).rows[0]
 const positionAge = (run: ComposeRun, object: OperationalObject): number | undefined =>
   object.spatial.position === undefined || run.clock === undefined ? undefined : Math.max(0, (Date.parse(run.clock.currentTime) - Date.parse(object.spatial.position.observedAt)) / 1_000)
 
@@ -155,9 +159,11 @@ export const membersOf = (run: ComposeRun, of: Collection): ReadonlyArray<Operat
     const [a, b] = [worstAlert(left), worstAlert(right)]
     return a === undefined || b === undefined ? Number(a === undefined) - Number(b === undefined) : worstFirst(a, b)
   }
+  const group = of.group === undefined ? undefined : membersDeclared(run, of.packId, of.categoryId)?.group
   return run.objects.filter(object => {
     const presented = run.denied.has(object.id) || object.packId !== of.packId ? null : presentedOf(run, object)
     if (presented?.categoryId !== of.categoryId) return false
+    if (of.group !== undefined && group?.of(object) !== of.group) return false
     if (!of.closed && (object.lifecycle === 'resolved' || object.lifecycle === 'removed')) return false
     if (words !== undefined && !words.includes((presented.status?.label ?? object.operational.status).toLowerCase())) return false
     return of.within === undefined || (near !== undefined && object.spatial.position !== undefined && routeDistanceMeters(near, object.spatial.position.point) <= distanceBands[of.within])
@@ -192,8 +198,9 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
     if (view.kind === 'values' && leads.has(index)) sections.push({ kind: 'values', rows: view.rows, values: values(leads.get(index)!), lead: index })
     else if (view.kind === 'values') sections.push(groupValues(values(view.refs ?? [])) ?? { kind: 'values', rows: view.rows, values: values(view.refs ?? []) })
     else if (view.kind === 'trend') sections.push({ kind: 'trend', rows: view.rows, horizonMs: horizonMs(view.horizon), strips: stripsOf(values(view.refs).filter(value => value.series !== null)).slice(0, 4) })
+    else if (isSetView(view)) sections.push(await setSection(run, view))
     else if (view.kind === 'alerts') {
-      const objectIds = view.objectIds === 'run' ? 'run' : view.objectIds.filter(id => visibleObject(run, id) !== undefined)
+      const objectIds = view.objectIds === 'run' || view.objectIds === 'set' ? view.objectIds : view.objectIds.filter(id => visibleObject(run, id) !== undefined)
       if (objectIds.length > 0) sections.push({ kind: 'alerts', rows: view.rows, objectIds, ...(view.elements === undefined ? {} : { elements: view.elements }), ...(view.refs === undefined ? {} : { refs: view.refs }), ...(view.lead === true ? { lead: true } : {}) })
     }
     else if (view.kind === 'slots') {
@@ -246,7 +253,8 @@ export const contextOrder = (run: Pick<ComposeRun, 'objects'>, rows: ReadonlyArr
  * own and every first-out).
  */
 const alertList = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): { readonly rows: ReadonlyArray<AlertRow>; readonly leading: number } => {
-  const objects = view.objectIds === 'run' ? run.objects.filter(object => !run.denied.has(object.id)) : view.objectIds.flatMap(id => visibleObject(run, id) ?? [])
+  const objects = view.objectIds === 'run' ? run.objects.filter(object => !run.denied.has(object.id))
+    : view.objectIds === 'set' ? (view.of === undefined ? [] : membersOf(run, view.of)) : view.objectIds.flatMap(id => visibleObject(run, id) ?? [])
   const all = alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
   const filtered = view.elements !== undefined || view.refs !== undefined
   const own = contextOrder(run, all.filter(row => !filtered
@@ -271,7 +279,7 @@ export const alertRowsFor = (run: ComposeRun, view: Extract<ResolvedView, { kind
  * Run time) only when asked, on open and after a gap.
  */
 export const sampleVignette = async (run: ViewRun, state: VignetteState, history?: { readonly fromMs: number }): Promise<VignetteSample> => {
-  const { leads: led, observations } = await readNow(run, state)
+  const { leads: led, observations, sets: members } = await readNow(run, state)
   const leadDeclared = led.size === 0 ? new Map<string, Declared>() : await declaredRefs(run, [...led.values()].flat())
   const leads = Object.fromEntries([...led].map(([index, list]) => [index, list.flatMap(ref => leadDeclared.has(ref) ? [valueOf(leadDeclared.get(ref)!)] : [])] as const))
   const alerts = new Map<string, AlertRow>()
@@ -301,10 +309,22 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
     }
   })
   const at = run.clock === undefined ? { at: new Date().toISOString(), clock: 'wall' as const, paused: false } : { at: run.clock.currentTime, clock: 'simulation' as const, paused: run.clock.paused }
+  // A set view's sample carries the rows and pens it shows, and only their values.
+  const sets: Record<number, SetSample> = {}
+  for (const [index, view] of state.views.entries()) {
+    if (isSetView(view) || isSetAlerts(view)) sets[index] = await sampleSet(run, view, ref => members.get(ref), history === undefined ? undefined : { fromMs: history.fromMs, at: at.at, series: run.series })
+  }
+  const shownRefs = Object.values(sets).flatMap(set => set.kind === 'compare' ? set.rows.flatMap(row => row.refs.flatMap(ref => ref ?? [])) : set.kind === 'set-trend' ? set.strips.flatMap(strip => strip.pens.map(pen => pen.ref)) : [])
+  const listed = new Set(observations.map(observation => observation.ref))
+  const shown = [...new Set(shownRefs)].flatMap(ref => listed.has(ref) || !members.has(ref) ? [] : [members.get(ref)!])
   const series = history === undefined ? undefined : await (async () => {
     const declared = await declaredRefs(run, state.views.flatMap(view => view.kind === 'trend' ? view.refs : []))
-    return Object.fromEntries([...declared.values()].flatMap(entry => entry.observable.series === null ? []
-      : [[entry.observable.series.seriesId, run.series(entry.observable.series.seriesId, new Date(history.fromMs).toISOString(), at.at)] as const]))
+    const pens = Object.values(sets).flatMap(set => set.kind === 'set-trend' ? set.strips.flatMap(strip => strip.pens.map(pen => pen.seriesId)) : [])
+    const ids = [...new Set([...[...declared.values()].flatMap(entry => entry.observable.series === null ? [] : [entry.observable.series.seriesId]), ...pens])]
+    return Object.fromEntries(ids.map(seriesId => [seriesId, run.series(seriesId, new Date(history.fromMs).toISOString(), at.at)] as const))
   })()
-  return { at, observations, alerts: [...alerts.values()], entities, slots, maps, ...(series === undefined ? {} : { series }), ...(led.size === 0 ? {} : { leads }) }
+  return {
+    at, observations: [...observations, ...shown], alerts: [...alerts.values()], entities, slots, maps, ...(series === undefined ? {} : { series }), ...(led.size === 0 ? {} : { leads }),
+    ...(Object.keys(sets).length === 0 ? {} : { sets }),
+  }
 }
