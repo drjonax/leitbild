@@ -1,0 +1,843 @@
+{
+  "fleet": {
+    "view": {
+      "viewType": "display.vignette",
+      "title": "Halden fleet",
+      "height": 384,
+      "state": "{\"title\":\"Halden fleet\",\"by\":\"assistant\",\"at\":{\"at\":\"2026-07-12T04:00:08.081Z\",\"clock\":\"simulation\"},\"views\":[{\"kind\":\"fleet\",\"of\":{\"packId\":\"process-plant\",\"categoryId\":\"process-plants\",\"group\":\"halden-power-complex\",\"closed\":false},\"rows\":14}]}"
+    },
+    "card": {
+      "at": {
+        "at": "2026-07-12T04:00:08.081Z",
+        "clock": "simulation"
+      },
+      "items": [
+        {
+          "key": "k1",
+          "label": "Process plants · halden-power-complex",
+          "reading": "12 units · 1 Hot standby (Halden Unit 3) · 1 Tripped (Halden Unit 3) · 1 Subcriticality red · FR-S.1 (Halden Unit 3)",
+          "numbers": [
+            {
+              "value": 12,
+              "decimals": 0
+            },
+            {
+              "value": 1,
+              "decimals": 0
+            },
+            {
+              "value": 1,
+              "decimals": 0
+            },
+            {
+              "value": 1,
+              "decimals": 0
+            }
+          ]
+        },
+        {
+          "key": "k2",
+          "label": "Halden Unit 3",
+          "reading": "alarm · Reactor trip on turbine trip · Hot standby · Tripped · Subcriticality red · FR-S.1 · Thermal power 617 MW",
+          "numbers": [
+            {
+              "value": 617,
+              "decimals": 0
+            }
+          ],
+          "priority": "alarm",
+          "subject": {
+            "objectId": "plant:halden-3"
+          }
+        },
+        {
+          "key": "k3",
+          "label": "Halden Unit 1",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-1"
+          }
+        },
+        {
+          "key": "k4",
+          "label": "Halden Unit 2",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-2"
+          }
+        },
+        {
+          "key": "k5",
+          "label": "Halden Unit 4",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-4"
+          }
+        },
+        {
+          "key": "k6",
+          "label": "Halden Unit 5",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-5"
+          }
+        },
+        {
+          "key": "k7",
+          "label": "Halden Unit 6",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-6"
+          }
+        },
+        {
+          "key": "k8",
+          "label": "Halden Unit 7",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-7"
+          }
+        },
+        {
+          "key": "k9",
+          "label": "Halden Unit 8",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-8"
+          }
+        },
+        {
+          "key": "k10",
+          "label": "Halden Unit 9",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-9"
+          }
+        },
+        {
+          "key": "k11",
+          "label": "Halden Unit 10",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-10"
+          }
+        },
+        {
+          "key": "k12",
+          "label": "Halden Unit 11",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-11"
+          }
+        },
+        {
+          "key": "k13",
+          "label": "Halden Unit 12",
+          "reading": "Power operation · Satisfied · Thermal power 3400 MW · Electrical output 1162 MW · 0 alarms",
+          "numbers": [
+            {
+              "value": 3400,
+              "decimals": 0
+            },
+            {
+              "value": 1162,
+              "decimals": 0
+            },
+            {
+              "value": 0,
+              "decimals": 0
+            }
+          ],
+          "subject": {
+            "objectId": "plant:halden-12"
+          }
+        }
+      ],
+      "more": 0,
+      "adjusted": []
+    }
+  },
+  "compare": {
+    "view": {
+      "viewType": "display.vignette",
+      "title": "Halden compared",
+      "height": 360,
+      "state": "{\"title\":\"Halden compared\",\"by\":\"assistant\",\"at\":{\"at\":\"2026-07-12T04:00:08.081Z\",\"clock\":\"simulation\"},\"views\":[{\"kind\":\"compare\",\"of\":{\"packId\":\"process-plant\",\"categoryId\":\"process-plants\",\"group\":\"halden-power-complex\",\"closed\":false},\"signals\":[{\"ref\":\"core.powerRangePercent\",\"label\":\"Reactor power\"},{\"ref\":\"pressurizer.pressureMPa\",\"label\":\"Pressurizer pressure\"},{\"ref\":\"sgA.levelPercent\",\"label\":\"SG A level\"}],\"rows\":13}]}"
+    },
+    "card": {
+      "at": {
+        "at": "2026-07-12T04:00:08.081Z",
+        "clock": "simulation"
+      },
+      "items": [
+        {
+          "key": "k1",
+          "label": "Process plants · halden-power-complex · 12 units",
+          "reading": "Reactor power | Pressurizer pressure | SG A level",
+          "numbers": [
+            {
+              "value": 12,
+              "decimals": 0
+            }
+          ]
+        },
+        {
+          "key": "k2",
+          "label": "Halden Unit 3",
+          "reading": "13.6 % | 15.13 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 13.6,
+              "decimals": 1
+            },
+            {
+              "value": 15.13,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "alarm",
+          "subject": {
+            "objectId": "plant:halden-3"
+          }
+        },
+        {
+          "key": "k3",
+          "label": "Halden Unit 1",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-1"
+          }
+        },
+        {
+          "key": "k4",
+          "label": "Halden Unit 2",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-2"
+          }
+        },
+        {
+          "key": "k5",
+          "label": "Halden Unit 4",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-4"
+          }
+        },
+        {
+          "key": "k6",
+          "label": "Halden Unit 5",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-5"
+          }
+        },
+        {
+          "key": "k7",
+          "label": "Halden Unit 6",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-6"
+          }
+        },
+        {
+          "key": "k8",
+          "label": "Halden Unit 7",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-7"
+          }
+        },
+        {
+          "key": "k9",
+          "label": "Halden Unit 8",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-8"
+          }
+        },
+        {
+          "key": "k10",
+          "label": "Halden Unit 9",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-9"
+          }
+        },
+        {
+          "key": "k11",
+          "label": "Halden Unit 10",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-10"
+          }
+        },
+        {
+          "key": "k12",
+          "label": "Halden Unit 11",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-11"
+          }
+        },
+        {
+          "key": "k13",
+          "label": "Halden Unit 12",
+          "reading": "100.0 % | 15.50 MPa | 55.0 %",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 55,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "objectId": "plant:halden-12"
+          }
+        }
+      ],
+      "more": 0,
+      "adjusted": []
+    }
+  },
+  "trend": {
+    "view": {
+      "viewType": "display.vignette",
+      "title": "Halden reactor power",
+      "height": 264,
+      "state": "{\"title\":\"Halden reactor power\",\"by\":\"assistant\",\"at\":{\"at\":\"2026-07-12T04:00:09.081Z\",\"clock\":\"simulation\"},\"views\":[{\"kind\":\"set-trend\",\"of\":{\"packId\":\"process-plant\",\"categoryId\":\"process-plants\",\"group\":\"halden-power-complex\",\"closed\":false},\"signals\":[{\"ref\":\"core.powerRangePercent\",\"label\":\"Reactor power\"},{\"ref\":\"pressurizer.pressureMPa\",\"label\":\"Pressurizer pressure\"}],\"horizon\":\"10m\",\"rows\":9}]}"
+    },
+    "card": {
+      "at": {
+        "at": "2026-07-12T04:00:09.081Z",
+        "clock": "simulation"
+      },
+      "items": [
+        {
+          "key": "k1",
+          "label": "Reactor power · 12 units",
+          "reading": "min 8.9 % (Halden Unit 3) · median 100.0 % · max 100.0 % (Halden Unit 12)",
+          "unit": "%",
+          "numbers": [
+            {
+              "value": 8.9,
+              "decimals": 1
+            },
+            {
+              "value": 100,
+              "decimals": 1
+            },
+            {
+              "value": 100,
+              "decimals": 1
+            }
+          ]
+        },
+        {
+          "key": "k2",
+          "label": "Halden Unit 3 · Power-range neutron flux (reactor power) · Core",
+          "reading": "8.9 %",
+          "unit": "%",
+          "numbers": [
+            {
+              "value": 8.9,
+              "decimals": 1
+            }
+          ],
+          "limits": [
+            {
+              "value": 105.9,
+              "decimals": 1
+            },
+            {
+              "value": 110.3,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-3#core.powerRangePercent"
+          }
+        },
+        {
+          "key": "k3",
+          "label": "Halden Unit 1 · Power-range neutron flux (reactor power) · Core",
+          "reading": "100.0 %",
+          "unit": "%",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            }
+          ],
+          "limits": [
+            {
+              "value": 105.9,
+              "decimals": 1
+            },
+            {
+              "value": 110.3,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-1#core.powerRangePercent"
+          }
+        },
+        {
+          "key": "k4",
+          "label": "Halden Unit 2 · Power-range neutron flux (reactor power) · Core",
+          "reading": "100.0 %",
+          "unit": "%",
+          "numbers": [
+            {
+              "value": 100,
+              "decimals": 1
+            }
+          ],
+          "limits": [
+            {
+              "value": 105.9,
+              "decimals": 1
+            },
+            {
+              "value": 110.3,
+              "decimals": 1
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-2#core.powerRangePercent"
+          }
+        },
+        {
+          "key": "k5",
+          "label": "Pressurizer pressure · 12 units",
+          "reading": "min 14.93 MPa (Halden Unit 3) · median 15.50 MPa · max 15.50 MPa (Halden Unit 12)",
+          "unit": "MPa",
+          "numbers": [
+            {
+              "value": 14.93,
+              "decimals": 2
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            },
+            {
+              "value": 15.5,
+              "decimals": 2
+            }
+          ]
+        },
+        {
+          "key": "k6",
+          "label": "Halden Unit 3 · Pressurizer pressure",
+          "reading": "14.93 MPa",
+          "unit": "MPa",
+          "numbers": [
+            {
+              "value": 14.93,
+              "decimals": 2
+            }
+          ],
+          "limits": [
+            {
+              "value": 14.8,
+              "decimals": 2
+            },
+            {
+              "value": 15.35,
+              "decimals": 2
+            },
+            {
+              "value": 15.65,
+              "decimals": 2
+            },
+            {
+              "value": 15.85,
+              "decimals": 2
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-3#pressurizer.pressureMPa"
+          }
+        },
+        {
+          "key": "k7",
+          "label": "Halden Unit 1 · Pressurizer pressure",
+          "reading": "15.50 MPa",
+          "unit": "MPa",
+          "numbers": [
+            {
+              "value": 15.5,
+              "decimals": 2
+            }
+          ],
+          "limits": [
+            {
+              "value": 15.65,
+              "decimals": 2
+            },
+            {
+              "value": 15.35,
+              "decimals": 2
+            },
+            {
+              "value": 15.85,
+              "decimals": 2
+            },
+            {
+              "value": 16,
+              "decimals": 2
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-1#pressurizer.pressureMPa"
+          }
+        },
+        {
+          "key": "k8",
+          "label": "Halden Unit 2 · Pressurizer pressure",
+          "reading": "15.50 MPa",
+          "unit": "MPa",
+          "numbers": [
+            {
+              "value": 15.5,
+              "decimals": 2
+            }
+          ],
+          "limits": [
+            {
+              "value": 15.65,
+              "decimals": 2
+            },
+            {
+              "value": 15.35,
+              "decimals": 2
+            },
+            {
+              "value": 15.85,
+              "decimals": 2
+            },
+            {
+              "value": 16,
+              "decimals": 2
+            }
+          ],
+          "priority": "none",
+          "subject": {
+            "ref": "plant:halden-2#pressurizer.pressureMPa"
+          }
+        }
+      ],
+      "more": 0,
+      "adjusted": []
+    }
+  }
+}
