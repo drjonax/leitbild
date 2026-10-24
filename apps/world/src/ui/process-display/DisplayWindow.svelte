@@ -7,6 +7,7 @@
     ChevronRight,
     ClipboardList,
     Ellipsis,
+    ExternalLink,
     Maximize2,
     Minimize2,
     Minus,
@@ -18,6 +19,7 @@
   import type { PackWindowToolsProps } from '../../core/packs/protocol.ts'
   import type { MapFocusTarget } from '../map-view.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
+  import { popOutDisplay } from '../embed/display-relay.ts'
   import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
   import { loadUiPack } from '../pack-loader.ts'
@@ -634,6 +636,11 @@
     if (window.parent !== window) window.parent.postMessage(message, location.origin)
   }
 
+  /** The shown display in a browser window of its own, which holds the Run loaded while it is visible. */
+  const popOut = (): void => {
+    if (currentEnvelope !== null && !popOutDisplay(currentEnvelope)) notice = 'The browser blocked the new window; allow pop-ups for Leitbild to pop a display out'
+  }
+
   const setMaximised = (next: boolean): void => {
     if (maximised === next) return
     maximised = next
@@ -929,6 +936,16 @@
           <Tools runId={runId} objectId={asset.objectId} openDisplay={(subject: string) => { void openDefaultAfter(subject) }} />
         {/key}
       {/if}
+      <button
+        type="button"
+        class="display-window-button"
+        aria-label={currentEnvelope === null ? 'Pop out: no display to pop out' : `Pop out ${currentEnvelope.title} into a browser window of its own`}
+        title="Pop out into a window of its own"
+        disabled={currentEnvelope === null}
+        onclick={popOut}
+      >
+        <ExternalLink size={16} aria-hidden="true" />
+      </button>
       {#if tier === 'wide' || tier === 'medium'}
         <button
           type="button"

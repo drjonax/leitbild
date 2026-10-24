@@ -80,6 +80,7 @@
   import type { ProcessPlantArtifactKind } from '../../packs/process-plant/ui/plant-client.ts'
   import { deckSetsOf, observedAssetsOf, packObserves, type DeckRunJoin, type DisplayWindowRequest, type DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
+  import { answerDisplayRelay, browserRelayChannel } from '../embed/display-relay.ts'
   import PlantCard, { type PlantCardAction } from '../../packs/process-plant/ui/PlantCard.svelte'
   import { plantCardView } from '../../packs/process-plant/ui/plant-card.ts'
   import { processPlantPackId } from '../../packs/process-plant/model.ts'
@@ -2004,6 +2005,14 @@
       }
       runAssistantOffered = offer.available
     }
+    // A display popped out of this Run's window returns here, and the displays it opens show here.
+    const pageRunId: string = route.simulationRunId
+    const stopDisplayRelay = answerDisplayRelay({
+      channel: browserRelayChannel(workspaceId),
+      workspaceId,
+      runId: () => pageRunId,
+      open: listing => requestDisplayWindow({ kind: 'listing', listing }, false),
+    })
     window.addEventListener('message', receiveDisplayWindowMessage)
     window.addEventListener('message', receiveRunAssistantOffer)
     window.parent.postMessage(displayWindowReadyMessage(), location.origin)
@@ -2013,6 +2022,7 @@
     void joinSimulationRun()
     const executionPoll = window.setInterval(() => { void refreshExecution() }, 1_000)
     return () => {
+      stopDisplayRelay()
       window.removeEventListener('message', receiveDisplayWindowMessage)
       window.removeEventListener('message', receiveRunAssistantOffer)
       cleanupInternalDiagnosticsGlobal()
