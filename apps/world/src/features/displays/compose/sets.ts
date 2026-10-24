@@ -152,7 +152,12 @@ const declaredOn = async (run: ComposeRun, members: ReadonlyArray<OperationalObj
 
 const columnsOf = (members: ReadonlyArray<OperationalObject>, signals: ReadonlyArray<SetSignal>, declared: ReadonlyMap<string, Declared>): ReadonlyArray<SetColumn> => signals.map(signal => {
   const first = members.map(member => declared.get(`${member.id}#${signal.ref}`)).find(entry => entry !== undefined)?.observable
-  return { label: signal.label, unit: first?.unit ?? '', ...(first === undefined ? {} : { quantity: first.quantity }), ...(first?.decades === true ? { decades: true as const } : {}) }
+  if (first === undefined) return { label: signal.label, unit: '' }
+  const { quantity, unit, valueType, states, thresholds, decades, series } = first
+  return {
+    label: signal.label, unit,
+    observable: { quantity, unit, valueType, thresholds, ...(states === undefined ? {} : { states }), ...(decades === true ? { decades } : {}), ...(series === null ? {} : { intervalMs: series.intervalMs }) },
+  }
 })
 
 export const setSection = async (run: ComposeRun, view: SetView): Promise<VignetteSection> => {

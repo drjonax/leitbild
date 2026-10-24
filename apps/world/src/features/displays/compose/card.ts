@@ -96,8 +96,8 @@ export const slotItems = (objectId: string, label: string, slots: ReadonlyArray<
 
 /** A number a set view shows, as its column writes it: a count unit ('1') by the column's word. */
 const setNumber = (value: number, column: SetColumn | Pick<FleetColumn, 'label' | 'unit'>): Words => {
-  const quantityKind = 'quantity' in column ? column.quantity : undefined
-  const decades = 'decades' in column && column.decades === true
+  const quantityKind = 'observable' in column ? column.observable?.quantity : undefined
+  const decades = 'observable' in column && column.observable?.decades === true
   if (column.unit === '1' && quantityKind === undefined) return { text: `${numberText(value, column.unit, 'count')} ${column.label.toLowerCase()}`, number: shown(value, column.unit, 'count') }
   return { text: quantity(value, column.unit, quantityKind, decades), number: shown(value, column.unit, quantityKind, decades) }
 }
