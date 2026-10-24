@@ -151,6 +151,17 @@ describe('a comparison across units', () => {
     if (!outcome.ok) expect(outcome.issues[0]).toMatchObject({ path: 'views.0.signals.0', code: 'unknown_name', didYouMean: [{ pack: 'process-plant', suggestions: ['Reactor power', 'Core thermal power', 'Electrical output'] }] })
   })
 
+  test('offers the roles nearest a refused name, its spelled-out words meeting their initials', async () => {
+    const offered = async (name: string) => {
+      const outcome = await compose(run, [{ kind: 'compare', of: CLUSTER, signals: [name] }])
+      if (outcome.ok) throw new Error(`${name} resolved`)
+      return outcome.issues[0]!.didYouMean?.[0]?.suggestions
+    }
+    expect(await offered('Steam generator narrow-range level')).toEqual(['SG A level', 'SG B level', 'SG C level', 'SG D level'])
+    expect(await offered('steam generator pressures')).toEqual(['SG A pressure', 'SG B pressure', 'SG C pressure', 'SG D pressure'])
+    expect(await offered('Bus voltage · Bus A')).toEqual(['Reactor power', 'Core thermal power', 'Electrical output'])
+  })
+
   test('beyond its rows shows the furthest from the median and a band over every unit', async () => {
     const outcome = await composed(run, [{ kind: 'compare', of: CLUSTER, signals: ['reactor-power'] }])
     const narrow: VignetteState = { ...outcome.state, views: [{ ...outcome.state.views[0]!, rows: 6 } as VignetteState['views'][number]] }

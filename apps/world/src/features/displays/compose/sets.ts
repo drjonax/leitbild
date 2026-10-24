@@ -93,6 +93,25 @@ export const resolveFleet = (run: ComposeRun, of: UnitSet, path: string): Compos
   return undefined
 }
 
+/** A name's words, and the initials of each two adjacent words, so a spelled-out name meets its abbreviation. */
+const wordsOf = (text: string) => {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 0).map(word => word.length > 3 ? word.replace(/s$/, '') : word)
+  return { words: new Set(words.filter(word => word.length > 1)), initials: new Set(words.slice(1).map((word, at) => `${words[at]![0]}${word[0]}`)) }
+}
+/** The roles sharing the most words with a refused name (at most a comparison's eight), so the refusal offers what
+ * was likely meant rather than the first roles declared. Initials count only against a whole word. */
+const nearestRoles = <Role extends { readonly id: string; readonly label: string }>(roles: ReadonlyArray<Role>, name: string): ReadonlyArray<Role> => {
+  const asked = wordsOf(name)
+  const scored = roles.map(role => {
+    const own = wordsOf(`${role.label} ${role.id}`)
+    const shared = new Set([...own.words].filter(word => asked.words.has(word) || asked.initials.has(word)))
+    for (const initials of own.initials) if (asked.words.has(initials)) shared.add(initials)
+    return { role, shared: shared.size }
+  })
+  const best = Math.max(0, ...scored.map(entry => entry.shared))
+  return best === 0 ? [] : scored.filter(entry => entry.shared === best).slice(0, 8).map(entry => entry.role)
+}
+
 /**
  * Each quantity named for a set, as a local ref every member of its model measures: a comparable role by id or label,
  * else what the name resolves to on the set's first member (an exact ref, objectId#tag-or-label or a qualified label).
@@ -103,10 +122,11 @@ export const resolveSetSignals = async (run: ComposeRun, of: UnitSet, names: Rea
   const category = categoryOfSet(run, of)
   if (members.length === 0 || category === undefined) return notObserved(`${path}.of`, 'the set has no members now')
   const roles = run.packs.find(pack => pack.descriptor.id === category.packId)?.observation?.comparable?.filter(role => role.category === category.categoryId) ?? []
-  const offered = roles.length === 0 ? undefined : [{ pack: category.packId, suggestions: roles.slice(0, 3).map(role => role.label) }]
   const signals: SetSignal[] = []
   for (const [index, name] of names.entries()) {
     const at = `${path}.signals.${index}`
+    const nearest = nearestRoles(roles, name)
+    const offered = roles.length === 0 ? undefined : [{ pack: category.packId, suggestions: (nearest.length > 0 ? nearest : roles.slice(0, 3)).map(role => role.label) }]
     const role = roles.find(entry => same(entry.id, name) || same(entry.label, name))
     let local = role?.ref
     if (local === undefined) {
