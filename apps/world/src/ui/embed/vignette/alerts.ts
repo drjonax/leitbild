@@ -75,8 +75,8 @@ export const alertDetail = (row: AlertRow): string => [
 type AlertsSection = Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs' | 'lead'>
 
 /** Whether a row belongs to a section: one of its objects (any in the Run), and where it names elements or observables, on one of them or, with `lead`, one of its objects' lead alerts. */
-const inSection = (section: AlertsSection) => (row: AlertRow): boolean => {
-  if (section.objectIds !== 'run' && !section.objectIds.includes(row.objectId)) return false
+const inSection = (section: AlertsSection, members: ReadonlyArray<string> = []) => (row: AlertRow): boolean => {
+  if (section.objectIds === 'set' ? !members.includes(row.objectId) : section.objectIds !== 'run' && !section.objectIds.includes(row.objectId)) return false
   if ((section.elements === undefined && section.refs === undefined) || (section.lead === true && leadsObject(row.alert))) return true
   const subject = row.alert.subject
   const element = subject !== undefined && 'element' in subject ? subject.element : undefined
@@ -87,10 +87,10 @@ const inSection = (section: AlertsSection) => (row: AlertRow): boolean => {
  * The rows a section shows within its rows (one is its head), in the sample's order, the last saying how many more
  * there are; and how many of all and of those not shown are unacknowledged.
  */
-export const sectionLines = (rows: ReadonlyArray<AlertRow>, section: AlertsSection, room: number): {
+export const sectionLines = (rows: ReadonlyArray<AlertRow>, section: AlertsSection, room: number, members?: ReadonlyArray<string>): {
   readonly lines: ReadonlyArray<AlertLine>; readonly more: number; readonly unacknowledged: { readonly all: number; readonly more: number }
 } => {
-  const own = rows.filter(inSection(section))
+  const own = rows.filter(inSection(section, members))
   const several = new Set(own.map(row => row.objectId)).size > 1
   const shown = own.length <= room ? own : own.slice(0, Math.max(0, room - 1))
   return {

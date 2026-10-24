@@ -56,7 +56,8 @@
           <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
         {/each}
       {:else if section.kind === 'alerts'}
-        <AlertsSection rows={latest?.alerts ?? []} {section} room={section.rows} />
+        {@const set = latest?.sets?.[index]}
+        <AlertsSection rows={latest?.alerts ?? []} {section} room={section.rows} members={set?.kind === 'alerts' ? set.members : undefined} />
       {:else if section.kind === 'entity'}
         <EntityTable {section} rows={latest?.entities[index]?.rows ?? []} more={latest?.entities[index]?.more ?? 0} />
       {:else if section.kind === 'slots'}
@@ -67,9 +68,9 @@
         {/each}
       {:else if section.kind === 'map'}
         <MapFocus frame={latest?.maps[index]} />
-      {:else if section.family === 'flow'}
+      {:else if section.kind === 'topology' && section.family === 'flow'}
         <FlowTopology {section} {observations} alerts={latest?.alerts ?? []} {palette} {frozen} {runId} {from} />
-      {:else}
+      {:else if section.kind === 'topology'}
         <NetworkTopology {section} {observations} {palette} />
       {/if}
     </div>

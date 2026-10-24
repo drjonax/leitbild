@@ -8,10 +8,12 @@
 import { observableRefSchema, refObjectId } from '../../../core/model/alerts.ts'
 import type { ElectricalConnectionDefinition, ObjectId, SimulationClockState } from '../../../core/model/index.ts'
 import type { Selector } from '../../../core/observation/spec.ts'
+import type { PackObjectCategory } from '../../../core/packs/protocol.ts'
 import { observationProviderFor } from '../observation/port.ts'
 import { resolveName, searchObservables, type SearchRun } from '../observation/search.ts'
 import { declarationOf, same, visibleObject } from './declared.ts'
 import type { Collection, ComposeIssue } from './model.ts'
+import { presentedOf } from './present.ts'
 import { topologyOf } from './topology.ts'
 
 export interface ComposeRun extends SearchRun {
@@ -95,10 +97,21 @@ const resolveCollection = async (run: ComposeRun, selector: Selector, path: stri
   if (isIssue(near)) return near
   if (near !== undefined && near.kind !== 'object') return { path: `${path}.of.near`, code: 'unknown_name', message: `"${selector.near}" is not an object; "near" names one object` }
   const { pack, category } = exact[0]!
+  const group = selector.group === undefined ? undefined : groupOf(run, pack, category, selector.group, path)
+  if (isIssue(group)) return group
   return { kind: 'collection', of: {
-    packId: pack, categoryId: category.id, closed: selector.closed,
+    packId: pack, categoryId: category.id, closed: selector.closed, ...(group === undefined ? {} : { group }),
     ...(selector.status === undefined ? {} : { status: selector.status }), ...(near === undefined ? {} : { near: near.objectId }), ...(selector.within === undefined ? {} : { within: selector.within }),
   } }
+}
+
+/** A group of a category as its Pack declares it, by key, among the groups its members are in now. */
+const groupOf = (run: ComposeRun, pack: string, category: PackObjectCategory, name: string, path: string): string | ComposeIssue => {
+  const declared = category.members?.group
+  if (declared === undefined) return { path: `${path}.of.group`, code: 'unknown_name', message: `${category.label} declares no groups; leave out group` }
+  const present = [...new Set(run.objects.flatMap(object => run.denied.has(object.id) || object.packId !== pack || presentedOf(run, object)?.categoryId !== category.id ? [] : declared.of(object) ?? []))]
+  return present.find(group => same(group, name)) ?? { path: `${path}.of.group`, code: 'unknown_name', message: `No ${category.label} are in ${declared.label.toLowerCase()} "${name}"`,
+    didYouMean: [{ pack, suggestions: present.slice(0, 3) }] }
 }
 
 /** The objects a subject is about: what alerts, maps and searches within it cover. */

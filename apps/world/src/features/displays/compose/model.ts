@@ -26,9 +26,16 @@ const horizons = { '2m': 120_000, '10m': 600_000, '30m': 1_800_000 } as const
 export const horizonMs = (horizon: keyof typeof horizons): number => horizons[horizon]
 
 export const collectionSchema = z.object({
-  packId: z.string().min(1).max(128), categoryId: z.string().min(1).max(128), status: z.array(z.string().min(1).max(80)).min(1).max(6).optional(),
+  packId: z.string().min(1).max(128), categoryId: z.string().min(1).max(128), group: z.string().min(1).max(128).optional(), status: z.array(z.string().min(1).max(80)).min(1).max(6).optional(),
   near: objectIdSchema.optional(), within: distanceBandSchema.optional(), closed: z.boolean(),
 }).strict()
+
+/** Units compared or trended together: a live collection, re-resolved each sample, or at most twelve named units. */
+export const unitSetSchema = z.union([collectionSchema, z.object({ objectIds: z.array(objectIdSchema).min(1).max(12) }).strict()])
+export type UnitSet = z.output<typeof unitSetSchema>
+/** A quantity matched on each unit: its local ref (after `objectId#`), the same on every unit of one model, and its column's words. */
+export const setSignalSchema = z.object({ ref: z.string().min(1).max(200), label: z.string().min(1).max(80) }).strict()
+export type SetSignal = z.output<typeof setSignalSchema>
 
 /**
  * A lead request: the values an object, or one of its elements, leads with as its Pack judges each sample (the Pack's
@@ -43,11 +50,20 @@ export const resolvedViewSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('values'), refs: z.array(observableRefSchema).min(1).max(16).optional(), lead: leadRequestSchema.optional(), rows }).strict()
     .refine(view => view.refs !== undefined || view.lead !== undefined, { message: 'a values view names refs or a lead request' }),
   z.object({ kind: z.literal('trend'), refs: z.array(observableRefSchema).min(1).max(12), horizon: z.enum(['2m', '10m', '30m']), rows }).strict(),
-  /** The objects' alerts, or only those on these elements or observables; `lead`: those first, then the objects' lead alerts (leadsObject). */
+  /**
+   * The objects' alerts, or only those on these elements or observables; `lead`: those first, then the objects' lead
+   * alerts (leadsObject). `set`: the alerts of a collection's members (`of`) as they are each sample.
+   */
   z.object({
-    kind: z.literal('alerts'), objectIds: z.union([z.literal('run'), z.array(objectIdSchema).min(1).max(48)]),
+    kind: z.literal('alerts'), objectIds: z.union([z.literal('run'), z.literal('set'), z.array(objectIdSchema).min(1).max(48)]), of: collectionSchema.optional(),
     elements: z.array(z.string().min(1).max(200)).min(1).max(8).optional(), refs: z.array(observableRefSchema).min(1).max(8).optional(), lead: z.literal(true).optional(), rows,
-  }).strict(),
+  }).strict().refine(view => (view.objectIds === 'set') === (view.of !== undefined), { message: 'a set alerts view names its collection, and only it does' }),
+  /** One row per member from its Pack's member columns, worst first, under an aggregate header. */
+  z.object({ kind: z.literal('fleet'), of: collectionSchema, rows }).strict(),
+  /** Rows are units, columns these quantities; beyond its rows, the units at caution or above and the outliers, then a band row. */
+  z.object({ kind: z.literal('compare'), of: unitSetSchema, signals: z.array(setSignalSchema).min(1).max(8), rows }).strict(),
+  /** A strip per quantity: a pen per unit up to four, else a min–median–max band and at most three named units. */
+  z.object({ kind: z.literal('set-trend'), of: unitSetSchema, signals: z.array(setSignalSchema).min(1).max(4), horizon: z.enum(['2m', '10m', '30m']), rows }).strict(),
   /** An entity-floor object's core slots. */
   z.object({ kind: z.literal('slots'), objectId: objectIdSchema, rows }).strict(),
   /** A table of these objects, or of a live collection's members. */
@@ -120,7 +136,14 @@ export type VignetteSection =
   | { readonly kind: 'grouped'; readonly rows: number; readonly quantities: ReadonlyArray<{ readonly label: string; readonly unit: string }>; readonly lines: ReadonlyArray<{ readonly element: VignetteElement; readonly values: ReadonlyArray<VignetteValue | null> }> }
   /** Pens drawn together share a strip: at most four strips of at most four pens. */
   | { readonly kind: 'trend'; readonly rows: number; readonly horizonMs: number; readonly strips: ReadonlyArray<ReadonlyArray<VignetteValue>> }
-  | { readonly kind: 'alerts'; readonly rows: number; readonly objectIds: ReadonlyArray<string> | 'run'; readonly elements?: ReadonlyArray<string>; readonly refs?: ReadonlyArray<string>; readonly lead?: true }
+  /** `set`: its objects are the sample's `sets[section].members`, as the set is now. */
+  | { readonly kind: 'alerts'; readonly rows: number; readonly objectIds: ReadonlyArray<string> | 'run' | 'set'; readonly elements?: ReadonlyArray<string>; readonly refs?: ReadonlyArray<string>; readonly lead?: true }
+  /** A row per member under an aggregate header; its rows are the sample's `sets[section]`. `group`: the group the set keeps. */
+  | { readonly kind: 'fleet'; readonly rows: number; readonly label: string; readonly group?: { readonly label: string; readonly value: string }; readonly columns: ReadonlyArray<FleetColumn> }
+  /** Rows are units, a column per quantity; its rows and band are the sample's `sets[section]`. */
+  | { readonly kind: 'compare'; readonly rows: number; readonly label: string; readonly columns: ReadonlyArray<SetColumn> }
+  /** A strip per quantity across a set; its pens and bands are the sample's `sets[section]`. */
+  | { readonly kind: 'set-trend'; readonly rows: number; readonly label: string; readonly horizonMs: number; readonly strips: ReadonlyArray<SetColumn> }
   /** Its values are the sample's `slots[objectId]`. */
   | { readonly kind: 'slots'; readonly rows: number; readonly objectId: string; readonly slots: ReadonlyArray<SlotDeclaration> }
   /** Its rows are the sample's `entities[section]`. */
@@ -170,7 +193,42 @@ export interface VignetteSample {
   readonly series?: Readonly<Record<string, RecordedSeries>>
   /** By the index of each values view holding a lead request: its values now, at most its rows (named ones first). */
   readonly leads?: Readonly<Record<number, ReadonlyArray<VignetteValue>>>
+  /** By the index of each view of a set: the set as it is now. */
+  readonly sets?: Readonly<Record<number, SetSample>>
 }
+
+/** A fleet column as a Pack declares it; `tally`: the aggregate header counts members by this word column. */
+export interface FleetColumn { readonly key: string; readonly label: string; readonly unit: string; readonly tally?: true }
+/** A quantity matched on each member: its words and how its numbers are written (no quantity where no member declares it now). */
+export interface SetColumn { readonly label: string; readonly unit: string; readonly quantity?: Observable['quantity']; readonly decades?: true }
+/** A member's worst alert: its priority and message (the alerts section ranks the rest). */
+export interface MemberAlert { readonly priority: Priority | null; readonly message: string }
+export interface FleetRow {
+  readonly objectId: string; readonly label: string; readonly values: Readonly<Record<string, string | number | null>>
+  readonly priority: Priority | null; readonly alert?: MemberAlert
+}
+/** Members by a tally column's word, leaving out its steady words; at most three named. */
+export interface FleetTally { readonly column: string; readonly word: string; readonly count: number; readonly labels: ReadonlyArray<string> }
+/** Across every member that reads it now, not only the rows shown; `minAt`, `maxAt`: the members at its ends. */
+export interface SetBand { readonly min: number; readonly median: number; readonly max: number; readonly count: number; readonly minAt: string; readonly maxAt: string }
+/** `refs`: each column's ref on this member, its value in the sample's observations; null where the member does not measure it. */
+export interface CompareRow { readonly objectId: string; readonly label: string; readonly priority: Priority | null; readonly refs: ReadonlyArray<string | null> }
+/**
+ * A strip now: one pen per member up to four, else the band and at most three named members (those at caution or above
+ * first, then the furthest from the median). `missing`: members that do not record it.
+ */
+export interface SetStrip { readonly pens: ReadonlyArray<SetPen>; readonly band: SetBand | null; readonly missing: ReadonlyArray<string> }
+/** A member's pen: its ref, its member's label and its series (the sample's `series[seriesId]` when history was asked for). */
+export interface SetPen { readonly ref: string; readonly label: string; readonly seriesId: string }
+export interface BandPoint { readonly t: number; readonly min: number; readonly median: number; readonly max: number }
+export type SetSample =
+  /** `more`: members beyond the rows, `moreAtCaution` of them at caution or above. */
+  | { readonly kind: 'fleet'; readonly members: number; readonly rows: ReadonlyArray<FleetRow>; readonly more: number; readonly moreAtCaution: number; readonly tallies: ReadonlyArray<FleetTally> }
+  /** `band`: per column, where more members read it than the rows show; `missing`: per column, the members that do not measure it. */
+  | { readonly kind: 'compare'; readonly members: number; readonly rows: ReadonlyArray<CompareRow>; readonly more: number; readonly band: ReadonlyArray<SetBand | null> | null; readonly missing: ReadonlyArray<ReadonlyArray<string>> }
+  /** `history` only when history was asked for: each banded strip's band from then, by strip index. */
+  | { readonly kind: 'set-trend'; readonly members: number; readonly strips: ReadonlyArray<SetStrip>; readonly history?: Readonly<Record<number, ReadonlyArray<BandPoint>>> }
+  | { readonly kind: 'alerts'; readonly members: ReadonlyArray<string> }
 
 export type ComposeIssueCode = 'unknown_name' | 'pack_is_not_an_object' | 'agent_access_restricted' | 'not_observed' | 'not_fitted'
 export interface ComposeIssue {

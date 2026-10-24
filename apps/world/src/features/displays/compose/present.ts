@@ -1,6 +1,6 @@
 /** An object's presentation, read server-side for its words only (category, status, urgency, relations), never its summary or fields. */
 import type { OperationalObject } from '../../../core/model/index.ts'
-import type { PackObjectPresentation } from '../../../core/packs/protocol.ts'
+import type { PackCategoryMembers, PackObjectCategory, PackObjectPresentation } from '../../../core/packs/protocol.ts'
 import type { SearchRun } from '../observation/search.ts'
 
 const presented = new WeakMap<OperationalObject, PackObjectPresentation | null>()
@@ -15,3 +15,11 @@ export const presentedOf = (run: SearchRun, object: OperationalObject): PackObje
   presented.set(object, made)
   return made
 }
+
+/** A Pack's presentation category by id. */
+export const categoryOf = (run: Pick<SearchRun, 'packs'>, packId: string, categoryId: string): PackObjectCategory | undefined =>
+  run.packs.find(pack => pack.descriptor.id === packId)?.presentation.categories.find(category => category.id === categoryId)
+
+/** How a category's members are grouped and listed, where its Pack declares it. */
+export const membersDeclared = (run: Pick<SearchRun, 'packs'>, packId: string, categoryId: string): PackCategoryMembers | undefined =>
+  categoryOf(run, packId, categoryId)?.members
