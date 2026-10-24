@@ -14,7 +14,7 @@
 </script>
 
 <div class="set-header">
-  <span class="title" title={group === undefined ? label : `${label} · ${group.label} ${group.value}`}>{label}{#if group !== undefined}<span class="group"> · {group.label} {group.value}</span>{/if}</span>
+  <span class="title" title={group === undefined ? label : `${label} · ${group.label} ${group.value}`}>{label}{#if group !== undefined}<span class="group">{` · ${group.label} ${group.value}`}</span>{/if}</span>
   <span class="count">{members} {members === 1 ? 'unit' : 'units'}</span>
   {#each tallies as tally (`${tally.column}:${tally.word}`)}
     <span class="tally" title={`${tally.labels.join(', ')}${tally.count > tally.labels.length ? ` and ${tally.count - tally.labels.length} more` : ''}`}>{tally.count} {tally.word}</span>

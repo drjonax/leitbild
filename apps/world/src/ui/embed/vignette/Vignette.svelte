@@ -6,7 +6,7 @@
   import { hostDisplayFrame } from '../view-host.ts'
   import { worstChip } from './alerts.ts'
   import { clockText, provenanceMark, underTitle } from './format.ts'
-  import { VIGNETTE_ROW_PX } from './grid.ts'
+  import { fillsFrame, VIGNETTE_ROW_PX } from './grid.ts'
   import { toneOf, valueLook } from './readout.ts'
   import { createVignetteSession, sampleStale, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
   import Sections from './Sections.svelte'
@@ -29,6 +29,8 @@
   let wallNow = $state(Date.now())
 
   const runId = $derived(simulationRunIdSchema.parse(envelope.subject.id))
+  /** A fleet or comparison fills its frame and scrolls its table inside it; any other vignette is as tall as its rows. */
+  const fills = $derived(fillsFrame(envelope.state))
   /** This display, as an element's pop-over names it when it opens the element's default in the display window. */
   const from = $derived({ key: envelope.state, title: envelope.title })
   runOnMount(() => {
@@ -39,7 +41,7 @@
       onChange: next => { snapshot = next },
     })
     const unhost = hostDisplayFrame({
-      kind: 'advice',
+      kind: fills ? 'generated' : 'advice',
       card: document.querySelector<HTMLElement>('article.vignette'),
       drawing: () => (snapshot.phase === 'connecting' ? undefined : snapshot.view ?? snapshot),
       setVisible: visible => session.setVisible(visible),
@@ -65,7 +67,7 @@
   })
 </script>
 
-<article class="vignette" style:--row={`${VIGNETTE_ROW_PX}px`} aria-label={view?.title ?? envelope.title}>
+<article class="vignette" class:fills style:--row={`${VIGNETTE_ROW_PX}px`} aria-label={view?.title ?? envelope.title}>
   <header>
     <h1 title={view?.title ?? envelope.title}>{view?.title ?? envelope.title}</h1>
     {#if view?.by === 'assistant'}<span class="ai" title="Composed by the Assistant from what the Run declares"><obi-ai></obi-ai>Assistant</span>{/if}
@@ -91,7 +93,7 @@
       {:else}Connecting to the Run…{/if}
     </p>
   {:else}
-    <Sections {view} {snapshot} {palette} frozen={footer.word === 'FROZEN'} {runId} {from} />
+    <Sections {view} {snapshot} {palette} frozen={footer.word === 'FROZEN'} {runId} {from} fill={fills} />
   {/if}
 
   <footer title={footer.why}>
@@ -114,6 +116,8 @@
   .chip.warning { background: var(--display-warning-fill); color: var(--display-on-warning); border-color: var(--alert-warning-color); }
   .chip.alarm { background: var(--display-alarm-fill); color: var(--display-on-alarm); border-color: var(--alert-alarm-color); }
   .chip.critical { background: var(--display-critical-fill); color: var(--display-on-critical); border-color: var(--alert-critical-color); }
+  .vignette.fills { display: flex; flex-direction: column; height: 100vh; }
+  .fills > header, .fills > footer, .fills > .chips { flex: none; }
   .status { margin: 0; padding: 4px 0; color: var(--element-neutral-color); }
   footer { font-size: 12px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; }
   .clock { font-weight: 700; letter-spacing: 0.04em; color: var(--element-active-color); }

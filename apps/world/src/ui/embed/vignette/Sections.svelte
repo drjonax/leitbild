@@ -26,7 +26,7 @@
   // flow drawing beside a column of the others; or in an element's pop-over
   // (ElementPopover.svelte), which leaves out its topologies: it stands beside
   // the drawing it opened from.
-  let { view, snapshot, palette, frozen, runId, from, drawings = true }: {
+  let { view, snapshot, palette, frozen, runId, from, drawings = true, fill = false }: {
     view: VignetteView
     snapshot: VignetteSnapshot
     palette: Palette
@@ -35,6 +35,8 @@
     /** The display these sections stand in, as an element's pop-over names it when it opens the element elsewhere. */
     from: OpenedFrom
     drawings?: boolean
+    /** The frame is the window's room (a fleet or comparison): each section takes its share and scrolls, not its rows. */
+    fill?: boolean
   } = $props()
 
   const latest = $derived(snapshot.latest)
@@ -46,7 +48,7 @@
 
 {#snippet one(section: VignetteSection, index: number)}
   {#if drawings || section.kind !== 'topology'}
-    <div class="section" style:height={`${section.rows * VIGNETTE_ROW_PX}px`}>
+    <div class="section" class:panels={fill} style:height={fill ? undefined : `${section.rows * VIGNETTE_ROW_PX}px`}>
       {#if section.kind === 'values'}
         {#each section.values as value (value.ref)}
           {@const look = valueLook(value, observations, value.ref)}
@@ -112,6 +114,8 @@
 
 <style>
   .section { overflow: hidden; }
+  /* A generated frame's scroller (display-extent.ts measures `.panels`): the table scrolls inside it. */
+  .section.panels { flex: 1 1 0; min-height: calc(3 * var(--row)); overflow: auto; }
   .beside { display: flex; gap: 16px; align-items: flex-start; overflow-x: auto; }
   .drawing { flex: none; }
   .column { flex: 0 0 360px; min-width: 0; }
