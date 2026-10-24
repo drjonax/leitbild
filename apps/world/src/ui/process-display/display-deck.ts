@@ -1,6 +1,6 @@
 import type { EmbeddedViewListing } from '@leitbild/contracts'
-import type { ObjectId } from '../../core/model/index.ts'
-import type { WorldPackDescriptor } from '../../core/packs/protocol.ts'
+import type { ObjectId, OperationalObject } from '../../core/model/index.ts'
+import type { PackObjectCategory, WorldPackDescriptor } from '../../core/packs/protocol.ts'
 import { listingRefusal } from './display-window-messages.ts'
 import type { DisplayKind } from './display-zoom.ts'
 
@@ -34,6 +34,33 @@ export interface DeckAsset {
   readonly label: string
 }
 
+/** A Pack-declared group of the Run's units (a category's group key), as World's fleet default names it. */
+export interface DeckSet {
+  readonly categoryId: string
+  readonly categoryLabel: string
+  readonly group: string
+  readonly members: number
+}
+
+/** The subject World composes a set's fleet default for (displays/default). */
+export const deckSetSubject = (set: DeckSet): { readonly of: { readonly category: string; readonly group: string } } =>
+  ({ of: { category: set.categoryId, group: set.group } })
+
+/** Each group a category declares that the Run's units are in now, in rail order of their first member. */
+export const deckSetsOf = (rows: ReadonlyArray<{
+  readonly category: Pick<PackObjectCategory, 'id' | 'label' | 'members'>
+  readonly objects: ReadonlyArray<OperationalObject>
+}>): ReadonlyArray<DeckSet> => rows.flatMap(({ category, objects }) => {
+  const declared = category.members?.group
+  if (declared === undefined) return []
+  const counts = new Map<string, number>()
+  for (const object of objects) {
+    const group = declared.of(object)
+    if (group !== undefined) counts.set(group, (counts.get(group) ?? 0) + 1)
+  }
+  return [...counts].map(([group, members]) => ({ categoryId: category.id, categoryLabel: category.label, group, members }))
+})
+
 interface DeckEntryBase {
   readonly key: string
   readonly title: string
@@ -59,7 +86,15 @@ export interface AnswerDeckEntry extends DeckEntryBase {
   readonly refusal: string | null
 }
 
-export type DeckEntry = AssetDeckEntry | AnswerDeckEntry
+/** A group's fleet, pinned ahead of the assets' overviews while the Run has units in it. */
+export interface SetDeckEntry extends DeckEntryBase {
+  readonly source: 'set'
+  readonly set: DeckSet
+  /** False once no unit of the Run is in the group while its fleet was shown. */
+  readonly inRun: boolean
+}
+
+export type DeckEntry = SetDeckEntry | AssetDeckEntry | AnswerDeckEntry
 
 /** What the window shows, with where it sat in its group so it can stay there when it leaves the list. */
 export interface ShownDeckEntry {
@@ -75,6 +110,7 @@ export const LEFT_CONVERSATION_CAPTION = 'No longer in the conversation'
 const OTHER_RUN_SUFFIX = ' · other Run'
 
 export const assetDeckKey = (simulationRunId: string, objectId: string): string => `asset:${simulationRunId}:${objectId}`
+export const setDeckKey = (simulationRunId: string, set: Pick<DeckSet, 'categoryId' | 'group'>): string => `set:${simulationRunId}:${set.categoryId}:${set.group}`
 
 // Agents' keys are its own; a prefix keeps them apart from asset keys.
 export const answerDeckKey = (listingKey: string): string => `answer:${listingKey}`
@@ -102,6 +138,16 @@ const objectsOf = (listing: EmbeddedViewListing): ReadonlySet<string> => {
   namedObjects.set(listing, named)
   return named
 }
+
+const setEntry = (simulationRunId: string, set: DeckSet): SetDeckEntry => ({
+  source: 'set',
+  key: setDeckKey(simulationRunId, set),
+  title: `Fleet · ${set.group}`,
+  caption: `${set.categoryLabel} · ${set.members} ${set.members === 1 ? 'unit' : 'units'}`,
+  kind: 'generated',
+  set,
+  inRun: true,
+})
 
 const assetEntry = (simulationRunId: string, asset: DeckAsset): AssetDeckEntry => ({
   source: 'asset',
@@ -134,18 +180,23 @@ const insertAt = <T>(items: ReadonlyArray<T>, index: number, item: T): ReadonlyA
   return [...items.slice(0, at), item, ...items.slice(at)]
 }
 
-/** The assets' defaults in rail order, then the answers' displays oldest first, with the shown entry kept where it was. */
+/** The groups' fleets, the assets' defaults in rail order, then the answers' displays oldest first, with the shown entry kept where it was. */
 export const buildDisplayDeck = (input: {
   readonly simulationRunId: string
+  readonly sets?: ReadonlyArray<DeckSet>
   readonly assets: ReadonlyArray<DeckAsset>
   readonly listings: ReadonlyArray<EmbeddedViewListing>
   readonly shown: ShownDeckEntry | null
 }): ReadonlyArray<DeckEntry> => {
+  let fleets: ReadonlyArray<DeckEntry> = (input.sets ?? []).map(set => setEntry(input.simulationRunId, set))
   let defaults: ReadonlyArray<DeckEntry> = input.assets.map(asset => assetEntry(input.simulationRunId, asset))
   let answers: ReadonlyArray<DeckEntry> = input.listings.map(listing => answerDeckEntry(input.simulationRunId, listing))
   const shown = input.shown
   if (shown !== null) {
     const { entry } = shown
+    if (entry.source === 'set' && !fleets.some(candidate => candidate.key === entry.key)) {
+      fleets = insertAt(fleets, shown.groupIndex, { ...entry, caption: LEFT_RUN_CAPTION, inRun: false })
+    }
     if (entry.source === 'asset' && !defaults.some(candidate => candidate.key === entry.key)) {
       defaults = insertAt(defaults, shown.groupIndex, { ...entry, caption: LEFT_RUN_CAPTION, inRun: false })
     }
@@ -156,7 +207,7 @@ export const buildDisplayDeck = (input: {
       answers = insertAt(answers, shown.groupIndex, { ...entry, caption, listed: false })
     }
   }
-  return [...defaults, ...answers]
+  return [...fleets, ...defaults, ...answers]
 }
 
 /** Where an entry sits within its group (assets or answers). */
@@ -175,7 +226,7 @@ export const shownDeckEntry = (
   entry,
   groupIndex: deck.some(candidate => candidate.key === entry.key)
     ? deckGroupIndex(deck, entry.key)
-    : entry.source === 'answer' ? listings.length : deck.filter(candidate => candidate.source === 'asset').length,
+    : entry.source === 'answer' ? listings.length : deck.filter(candidate => candidate.source === entry.source).length,
   wasListed: entry.source === 'answer' && listings.some(listing => listing.key === entry.listing.key),
 })
 
@@ -347,6 +398,7 @@ const runJoinReason = (join: DeckRunJoin): string | null =>
   join.state === 'joined' ? null : join.state === 'joining' ? 'This Run is still opening' : `This Run could not be opened: ${join.reason}`
 
 export const deckEntryAsset = (entry: DeckEntry, assets: ReadonlyArray<DeckAsset>, join: DeckRunJoin): DeckAssetTarget => {
+  if (entry.source === 'set') return { ok: false, reason: `A fleet is about every unit of ${entry.set.group}; open a unit for its tools` }
   if (entry.source === 'answer' && entry.refusal !== null) return { ok: false, reason: `Not a display this window shows: ${entry.refusal}` }
   if (entry.source === 'answer' && entry.otherRun) return { ok: false, reason: 'Belongs to another Run' }
   const waiting = runJoinReason(join)

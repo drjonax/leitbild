@@ -78,7 +78,7 @@
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject } from '../../packs/process-plant/model.ts'
   import type { ProcessPlantArtifactKind } from '../../packs/process-plant/ui/plant-client.ts'
-  import { observedAssetsOf, packObserves, type DeckRunJoin, type DisplayWindowRequest, type DisplayWindowTarget } from '../process-display/display-deck.ts'
+  import { deckSetsOf, observedAssetsOf, packObserves, type DeckRunJoin, type DisplayWindowRequest, type DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import PlantCard, { type PlantCardAction } from '../../packs/process-plant/ui/PlantCard.svelte'
   import { plantCardView } from '../../packs/process-plant/ui/plant-card.ts'
@@ -1105,6 +1105,9 @@
     if (pack === null) return []
     return observedAssetsOf(categoryRows.flatMap(row => row.objects), objects, object => packObserves(pack.packForObject(object).descriptor))
   })
+
+  // Each group a category declares that the rail's units are in: the window pins its fleet.
+  const displaySets = $derived(deckSetsOf(categoryRows))
 
   const droneControlWindowModels = $derived<ReadonlyArray<DroneWindowModel>>(
     droneControlWindows.flatMap((entry, index) => {
@@ -2341,6 +2344,7 @@
     simulationRunId={displayWindowRunId}
     runJoin={displayRunJoin}
     assetObjects={observedAssetObjects}
+    sets={displaySets}
     listings={conversationDisplays}
     request={displayWindowRequest}
     runsProcedures={object => procedureScopeForObject(object) !== null}

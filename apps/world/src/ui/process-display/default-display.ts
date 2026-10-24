@@ -2,8 +2,8 @@ import { embeddedViewEnvelopeSchema, type EmbeddedViewEnvelope } from '@leitbild
 import type { SimulationRunId } from '../../core/model/index.ts'
 import { workspaceApiPath } from '../workspace-context.ts'
 
-// World's default display of a subject (an asset, `<asset>#<ref>` or
-// `<asset>#<element>`), as World composes it for a person (POST
+// World's default display of a subject (an asset, `<asset>#<ref>`,
+// `<asset>#<element>` or a declared group's set), as World composes it for a person (POST
 // displays/default) and as the display window and a procedure tag's dialog
 // frame it: read-only, the Run its subject, as for a display shown below an
 // agent's answer.
@@ -17,7 +17,7 @@ export interface DefaultDisplayView {
 }
 
 /** World's default display of a subject; a refusal throws with World's words. */
-export const readDefaultDisplay = async (simulationRunId: SimulationRunId, subject: string): Promise<DefaultDisplayView> => {
+export const readDefaultDisplay = async (simulationRunId: SimulationRunId, subject: string | { readonly of: { readonly category: string; readonly group: string } }): Promise<DefaultDisplayView> => {
   const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/displays/default`), {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject }),
   })

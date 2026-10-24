@@ -38,6 +38,7 @@
     backFrom,
     buildDisplayDeck,
     deckEntryAsset,
+    deckSetSubject,
     mountedDeckEntries,
     newDisplayAnnouncement,
     observeConversation,
@@ -55,9 +56,11 @@
     type DeckEntry,
     type DeckReturns,
     type DeckRunJoin,
+    type DeckSet,
     type DeckStep,
     type DisplayWindowRequest,
     type MountedDeckFrame,
+    type SetDeckEntry,
     type ShownDeckEntry,
   } from './display-deck.ts'
   import {
@@ -102,6 +105,8 @@
     readonly runJoin: DeckRunJoin
     /** The assets the Run observes, in rail order: the window opens each one's World default. */
     readonly assetObjects: ReadonlyArray<OperationalObject>
+    /** The groups the Run's units are in, as their Packs declare them: the window pins each one's fleet. */
+    readonly sets: ReadonlyArray<DeckSet>
     /** The conversation's displays, oldest first, as the Host relays them. */
     readonly listings: ReadonlyArray<EmbeddedViewListing>
     readonly request: DisplayWindowRequest
@@ -118,6 +123,7 @@
     simulationRunId,
     runJoin,
     assetObjects,
+    sets,
     listings,
     request,
     runsProcedures,
@@ -220,7 +226,7 @@
   let zoomWriteTimer: ReturnType<typeof setTimeout> | null = null
 
   const assets = $derived<ReadonlyArray<DeckAsset>>(assetObjects.map(object => ({ objectId: object.id, packId: object.packId, label: object.label })))
-  const deck = $derived(buildDisplayDeck({ simulationRunId: runId, assets, listings, shown }))
+  const deck = $derived(buildDisplayDeck({ simulationRunId: runId, sets, assets, listings, shown }))
   const current = $derived(shown === null ? null : deck.find(entry => entry.key === shown!.entry.key) ?? null)
   const position = $derived(current === null ? 0 : deck.findIndex(entry => entry.key === current!.key) + 1)
   const hasPrevious = $derived(position > 1)
@@ -250,7 +256,7 @@
   const currentZoom = $derived(current === null ? null : zoomStates.get(current.key) ?? null)
   const zoomPercent = $derived(currentZoom === null ? 100 : displayZoomPercent(currentZoom.zoom))
   const scaled = $derived(currentZoom !== null && !isActualSize(currentZoom.zoom))
-  const currentDefault = $derived(current?.source === 'asset' ? defaultViews.get(current.key) ?? null : null)
+  const currentDefault = $derived(current !== null && current.source !== 'answer' ? defaultViews.get(current.key) ?? null : null)
   const currentEnvelope = $derived(current === null ? null : envelopeFor(current))
   // A listing this window cannot show (another view type) says so in place of a frame.
   const currentRefusal = $derived(current?.source === 'answer' ? current.refusal : null)
@@ -270,6 +276,7 @@
     ? 'wide'
     : effectiveBounds.width >= 700 ? 'medium' : effectiveBounds.width >= 520 ? 'narrow' : 'tiny')
   const groups = $derived([
+    { id: 'sets', label: 'Fleets', entries: deck.filter(entry => entry.source === 'set') },
     { id: 'assets', label: 'Overviews', entries: deck.filter(entry => entry.source === 'asset') },
     { id: 'answers', label: 'From answers', entries: deck.filter(entry => entry.source === 'answer') },
   ].filter(group => group.entries.length > 0))
@@ -306,10 +313,10 @@
     }
   }
 
-  const zoomStoreFor = (entry: DeckEntry) => entry.source === 'asset' ? overviewZooms : answerZooms
+  const zoomStoreFor = (entry: DeckEntry) => entry.source === 'answer' ? answerZooms : overviewZooms
 
   const zoomStorageKey = (entry: DeckEntry): string =>
-    entry.source === 'asset' ? overviewZoomKey(runId, entry.asset.objectId) : entry.listing.key
+    entry.source === 'answer' ? entry.listing.key : overviewZoomKey(runId, entry.source === 'asset' ? entry.asset.objectId : entry.key)
 
   const flushZoomWrites = (): void => {
     zoomWriteTimer = null
@@ -456,12 +463,12 @@
     notice = problem
   }
 
-  const loadDefaultView = async (entry: AssetDeckEntry): Promise<void> => {
+  const loadDefaultView = async (entry: AssetDeckEntry | SetDeckEntry): Promise<void> => {
     const existing = defaultViews.get(entry.key)
     if (existing && existing.state !== 'failed') return
     defaultViews = withValue(defaultViews, entry.key, { state: 'loading' })
     try {
-      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: runId, view: await readDefaultDisplay(runId, entry.asset.objectId) })
+      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: runId, view: await readDefaultDisplay(runId, entry.source === 'asset' ? entry.asset.objectId : deckSetSubject(entry.set)) })
       if (!disposed) defaultViews = withValue(defaultViews, entry.key, { state: 'ready', envelope })
     } catch (err) {
       if (!disposed) defaultViews = withValue(defaultViews, entry.key, { state: 'failed', error: errorText(err) })
@@ -472,7 +479,7 @@
 
   const showEntry = (entry: DeckEntry): void => {
     const nextShown = shownDeckEntry(deck, entry, listings)
-    const nextDeck = buildDisplayDeck({ simulationRunId: runId, assets, listings, shown: nextShown })
+    const nextDeck = buildDisplayDeck({ simulationRunId: runId, sets, assets, listings, shown: nextShown })
     showSequence += 1
     shown = nextShown
     const kept = mountedFrames.filter(frame => nextDeck.some(candidate => candidate.key === frame.key))
@@ -480,7 +487,7 @@
     mountedFrames = entry.source === 'answer' && entry.refusal !== null ? kept : touchMountedFrames(kept, entry, showSequence)
     acknowledgement = acknowledgeShown(acknowledgement, listings, entry)
     prepareZoom(entry)
-    if (entry.source === 'asset') void loadDefaultView(entry)
+    if (entry.source !== 'answer') void loadDefaultView(entry)
   }
 
   const step = (direction: DeckStep): void => {
@@ -987,7 +994,7 @@
         <div class="display-window-message" role="status">
           <span><strong>{current.title}</strong> cannot be shown here: {currentRefusal}.</span>
         </div>
-      {:else if currentDefault?.state === 'failed' && current.source === 'asset'}
+      {:else if currentDefault?.state === 'failed' && current.source !== 'answer'}
         {@const failedEntry = current}
         <div class="display-window-message error" role="alert">
           <span>{currentDefault.error}</span>
