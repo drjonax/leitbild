@@ -2,7 +2,8 @@
  * The Run as the Assistant sees it before it calls anything (plan v3.1 §2.4,
  * architecture A4): a header, up to 8 asset lines (objects that declare
  * observations, worst declared alert priority first, then Run order) with the
- * refs of their lead values, one line per presentation category for every
+ * refs of their lead values, one line per Pack-declared group of members (a
+ * plant cluster, named as a set), one line per presentation category for every
  * other object, one per record-only Pack, the dashboards line, each Pack's
  * fenced guidance, and how many objects the caller may not see. Words come
  * from presentation, alerts from the core slot, refs from the Pack's lead
@@ -83,6 +84,34 @@ export const assembleRunContext = async (run: {
       : kept.length + dropped === 0 ? 'lead: none declared' : `lead: ${[...kept, ...(dropped > 0 ? [`+${dropped} refs`] : [])].join(', ')}`)
   }))
 
+  // One line per group a Pack declares (a plant cluster): its members by their tally words and its worst, so a fleet of
+  // any size is named as a set beside the eight assets.
+  const groupLines = run.packs.flatMap(pack => pack.presentation.categories.flatMap(category => {
+    const members = category.members
+    if (members?.group === undefined) return []
+    const groups = new Map<string, OperationalObject[]>()
+    for (const object of visible) {
+      if (object.packId !== pack.descriptor.id || presented.get(object.id)?.category?.id !== category.id) continue
+      const group = members.group.of(object)
+      if (group !== undefined) groups.set(group, [...groups.get(group) ?? [], object])
+    }
+    return [...groups].map(([group, objects]) => {
+      const tallies = members.columns.flatMap(column => {
+        if (column.tally === undefined) return []
+        const words = new Map<string, string[]>()
+        for (const object of objects) {
+          const word = members.row(object)[column.key]
+          if (typeof word === 'string' && !column.tally.except.includes(word)) words.set(word, [...words.get(word) ?? [], object.label])
+        }
+        return [...words].map(([word, labels]) => `${labels.length} ${word} (${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ', …' : ''})`)
+      })
+      const worst = byWorst(objects.filter(object => object.alerts.length > 0))[0]
+      return fitted([`- ${members.group!.label} ${group} (${category.label}, ${pack.descriptor.id}): ${objects.length} units`,
+        ...(worst === undefined ? [] : [`worst ${worstWord(worstOf(worst)!)} ${worst.label}`]),
+        `as a set: {"of": {"category": "${category.id}", "group": "${group}"}}`], tallies, (kept, dropped) => [...kept, ...(dropped > 0 ? [`+${dropped} more`] : [])].join(' · '))
+    })
+  }))
+
   const others = visible.filter(object => !assets.includes(object))
   const categories = new Map<string, { readonly label: string; readonly objects: OperationalObject[] }>()
   for (const object of others) {
@@ -113,7 +142,7 @@ export const assembleRunContext = async (run: {
   let kept = categoryLines.length
   const compose = (): string => {
     const dropped = categoryLines.length - kept
-    return [header, ...assetLines, ...categoryLines.slice(0, kept), ...(dropped > 0 ? [`+${dropped} more categories (observables.search finds their objects)`] : []), ...recordLines, ...tail].join('\n')
+    return [header, ...assetLines, ...groupLines, ...categoryLines.slice(0, kept), ...(dropped > 0 ? [`+${dropped} more categories (observables.search finds their objects)`] : []), ...recordLines, ...tail].join('\n')
   }
   while (kept > 0 && (compose().length > maxChars || compose().split('\n').length > maxLines)) kept -= 1
   return { text: compose(), at: run.clock?.currentTime ?? new Date().toISOString(), clock: run.clock === undefined ? 'wall' : 'simulation' }
