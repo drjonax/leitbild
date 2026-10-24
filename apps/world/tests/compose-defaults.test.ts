@@ -117,7 +117,7 @@ describe('a run-wide alerts view', () => {
 
   test('needs no subject, covers every subject named, and shows nothing of what the caller may not inspect', async () => {
     expect((await drawn(run, ['plant:halden-1', 'grid:halden-four-unit', 'weather-probe:halden-complex'])).state.views.map(view => view.kind)).toEqual(['alerts'])
-    expect(displaySpecSchema.safeParse({ title: 't', question: 'q', subjects: [], views: [{ kind: 'alerts' }] }).error?.issues[0]?.message).toBe('name 1 to 6 subjects; only a run-wide alerts view (scope run) needs none')
+    expect(displaySpecSchema.safeParse({ title: 't', question: 'q', subjects: [], views: [{ kind: 'alerts' }] }).error?.issues[0]?.message).toBe('name 1 to 6 subjects; only a run-wide alerts view (scope run) or a view of a set (of) needs none')
     const hidden = (await drawn({ ...run, denied: new Set(['grid:halden-four-unit']) })).sample
     expect(hidden.alerts.some(row => row.objectId === 'grid:halden-four-unit')).toBe(false)
   })
