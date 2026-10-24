@@ -108,16 +108,20 @@ const labelled = (value: number, column: Pick<FleetColumn, 'label' | 'unit'>): W
 }
 const priorityWord = (priority: Priority | null): ReadonlyArray<string> => atLeastCaution(priority) ? [priority!] : []
 
-/** A fleet row in words: each column's word or number (none where it has none now), then its worst alert at caution or above. */
+/**
+ * A fleet row in words: its worst alert at caution or above, then each column's word or number (none where it has none
+ * now). Columns that do not fit are left out whole, so a number is never cut and the alert is never the part dropped.
+ */
 export const fleetRowItem = (row: FleetRow, columns: ReadonlyArray<Pick<FleetColumn, 'key' | 'label' | 'unit'>>): Item => {
-  const parts = columns.flatMap(column => {
+  type Part = { readonly text: string; readonly number?: Shown }
+  const alert: ReadonlyArray<Part> = row.alert !== undefined && atLeastCaution(row.alert.priority) ? [{ text: `${row.alert.priority} · ${row.alert.message}`.slice(0, 120) }] : []
+  const parts = [...alert, ...columns.flatMap((column): ReadonlyArray<Part> => {
     const value = row.values[column.key]
     return value === null || value === undefined ? [] : [typeof value === 'number' ? labelled(value, column) : { text: value }]
-  })
-  const alert = row.alert !== undefined && atLeastCaution(row.alert.priority) ? [`${row.alert.priority} · ${row.alert.message}`] : []
+  })].reduce<ReadonlyArray<Part>>((kept, part) => [...kept, part].map(entry => entry.text).join(' · ').length <= 120 ? [...kept, part] : kept, [])
   return {
-    label: row.label.slice(0, 80), reading: ([...parts.map(part => part.text), ...alert].join(' · ') || 'no reading').slice(0, 120),
-    numbers: parts.flatMap(part => 'number' in part && part.number !== undefined ? [part.number] : []).slice(0, 8),
+    label: row.label.slice(0, 80), reading: parts.map(part => part.text).join(' · ') || 'no reading',
+    numbers: parts.flatMap(part => part.number === undefined ? [] : [part.number]).slice(0, 8),
     ...(row.priority === null ? {} : { priority: row.priority }), subject: { objectId: row.objectId },
   }
 }
